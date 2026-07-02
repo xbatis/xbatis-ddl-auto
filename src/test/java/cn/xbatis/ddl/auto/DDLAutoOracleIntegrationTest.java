@@ -96,9 +96,9 @@ class DDLAutoOracleIntegrationTest {
             DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
                     DbType.ORACLE,
                     connection,
-                    "BOOLEAN",
-                    "FALSE",
-                    "TRUE"
+                    "NUMBER(1)",
+                    "0",
+                    "1"
             );
         }
     }

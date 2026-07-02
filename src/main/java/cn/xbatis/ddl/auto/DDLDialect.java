@@ -98,6 +98,12 @@ public class DDLDialect {
 
     public String getBooleanType(IDbType dbType) {
         validateDbType(dbType);
+        if (isMysql(dbType)) {
+            return "TINYINT(1)";
+        }
+        if (isOracle(dbType)) {
+            return "NUMBER(1)";
+        }
         if (dbType == DbType.SQL_SERVER) {
             return "BIT";
         }
