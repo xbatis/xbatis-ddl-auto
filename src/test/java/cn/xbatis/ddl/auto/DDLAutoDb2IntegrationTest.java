@@ -176,6 +176,42 @@ class DDLAutoDb2IntegrationTest {
     }
 
     @Test
+    void db2ShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertMultiColumnAddColumnFlow(
+                    DbType.DB2,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER ADD COLUMN email VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void db2ShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
+                    DbType.DB2,
+                    connection,
+                    "BOOLEAN",
+                    "FALSE",
+                    "TRUE"
+            );
+        }
+    }
+
+    @Test
+    void db2ShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateTimeDefaultValueFlow(
+                    DbType.DB2,
+                    connection,
+                    "created_at TIMESTAMP DEFAULT CURRENT TIMESTAMP",
+                    "event_at TIMESTAMP DEFAULT CURRENT TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
     void db2ShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

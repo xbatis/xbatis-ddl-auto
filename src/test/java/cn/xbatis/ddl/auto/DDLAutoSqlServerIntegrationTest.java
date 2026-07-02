@@ -95,6 +95,42 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertMultiColumnAddColumnFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD age INTEGER, email NVARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void sqlServerShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "BIT",
+                    "0",
+                    "1"
+            );
+        }
+    }
+
+    @Test
+    void sqlServerShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateTimeDefaultValueFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "created_at DATETIME2 DEFAULT SYSDATETIME()",
+                    "event_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()"
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

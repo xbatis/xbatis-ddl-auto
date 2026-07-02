@@ -78,6 +78,43 @@ class DDLAutoSqliteIntegrationTest {
     }
 
     @Test
+    void sqliteShouldAddMultipleMissingColumnsAsSeparateAlter() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertMultiColumnAddColumnFlow(
+                    DbType.SQLITE,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER;",
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN email VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void sqliteShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
+                    DbType.SQLITE,
+                    connection,
+                    "BOOLEAN",
+                    "FALSE",
+                    "TRUE"
+            );
+        }
+    }
+
+    @Test
+    void sqliteShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateTimeDefaultValueFlow(
+                    DbType.SQLITE,
+                    connection,
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
     void sqliteShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

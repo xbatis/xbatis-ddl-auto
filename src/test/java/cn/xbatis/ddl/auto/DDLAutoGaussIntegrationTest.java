@@ -51,6 +51,42 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
     }
 
     @Test
+    void gaussShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertMultiColumnAddColumnFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void gaussShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertBooleanDefaultValueFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "BOOLEAN",
+                    "FALSE",
+                    "TRUE"
+            );
+        }
+    }
+
+    @Test
+    void gaussShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertDateTimeDefaultValueFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
     void gaussShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertIntLongAutoAndManualIdFlow(

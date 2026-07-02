@@ -148,6 +148,23 @@ public class DDLDialect {
         return "TIMESTAMP";
     }
 
+    public String getDateTimeWithTimeZoneType(IDbType dbType) {
+        validateDbType(dbType);
+        if (isMysql(dbType)) {
+            return "TIMESTAMP";
+        }
+        if (isSqlServer(dbType)) {
+            return "DATETIMEOFFSET";
+        }
+        if (dbType == DbType.DB2) {
+            return "TIMESTAMP";
+        }
+        if (dbType == DbType.CLICK_HOUSE) {
+            return "DateTime64(3, 'UTC')";
+        }
+        return "TIMESTAMP WITH TIME ZONE";
+    }
+
     public boolean isMysql(IDbType dbType) {
         validateDbType(dbType);
         return dbType == DbType.MYSQL || dbType == DbType.MARIA_DB || dbType.getDbModel() == DbModel.MYSQL;
@@ -200,6 +217,11 @@ public class DDLDialect {
     public boolean supportsAddColumnKeyword(IDbType dbType) {
         validateDbType(dbType);
         return dbType != DbType.ORACLE && dbType != DbType.DM && dbType != DbType.SQL_SERVER;
+    }
+
+    public boolean supportsMultipleAddColumns(IDbType dbType) {
+        validateDbType(dbType);
+        return !isSqlite(dbType);
     }
 
     public boolean supportsUniqueConstraint(IDbType dbType) {

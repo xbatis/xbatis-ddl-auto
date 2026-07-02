@@ -37,6 +37,33 @@ class DDLAutoMariadbIntegrationTest extends DDLAutoExternalDatabaseIntegrationSu
     }
 
     @Test
+    void mariadbShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        assertMultiColumnAddColumnFlow(
+                DATABASE,
+                "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+        );
+    }
+
+    @Test
+    void mariadbShouldCreateBooleanDefaultValueColumns() throws Exception {
+        assertBooleanDefaultValueFlow(
+                DATABASE,
+                "TINYINT(1)",
+                "0",
+                "1"
+        );
+    }
+
+    @Test
+    void mariadbShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        assertDateTimeDefaultValueFlow(
+                DATABASE,
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        );
+    }
+
+    @Test
     void mariadbShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         assertIntLongAutoAndManualIdFlow(
                 DATABASE,

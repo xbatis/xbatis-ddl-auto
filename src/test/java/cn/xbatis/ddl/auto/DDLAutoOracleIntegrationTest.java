@@ -80,6 +80,42 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
+    void oracleShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertMultiColumnAddColumnFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD (age NUMBER(10), email VARCHAR2(128));"
+            );
+        }
+    }
+
+    @Test
+    void oracleShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "NUMBER(1)",
+                    "0",
+                    "1"
+            );
+        }
+    }
+
+    @Test
+    void oracleShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateTimeDefaultValueFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
     void oracleShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

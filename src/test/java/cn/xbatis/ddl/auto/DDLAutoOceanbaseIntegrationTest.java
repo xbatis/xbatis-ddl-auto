@@ -37,6 +37,33 @@ class DDLAutoOceanbaseIntegrationTest extends DDLAutoExternalDatabaseIntegration
     }
 
     @Test
+    void oceanbaseShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        assertMultiColumnAddColumnFlow(
+                DATABASE,
+                "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+        );
+    }
+
+    @Test
+    void oceanbaseShouldCreateBooleanDefaultValueColumns() throws Exception {
+        assertBooleanDefaultValueFlow(
+                DATABASE,
+                "TINYINT(1)",
+                "0",
+                "1"
+        );
+    }
+
+    @Test
+    void oceanbaseShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        assertDateTimeDefaultValueFlow(
+                DATABASE,
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        );
+    }
+
+    @Test
     void oceanbaseShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         assertIntLongAutoAndManualIdFlow(
                 DATABASE,

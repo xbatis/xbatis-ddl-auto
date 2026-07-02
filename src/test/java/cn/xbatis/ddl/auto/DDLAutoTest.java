@@ -137,16 +137,75 @@ class DDLAutoTest {
                     .add(UpdateMultiUserV1.class)
                     .execute(connection);
 
-            DDLTestPrinter.ddl(DbType.H2)
+            List<String> executedSqlList = new java.util.ArrayList<>();
+            DDLTestPrinter.ddl(DbType.H2, executedSqlList)
                     .mode(Mode.UPDATE)
                     .add(UpdateMultiUserV2.class)
                     .execute(connection);
 
+            assertEquals(1, executedSqlList.size());
+            assertEquals("ALTER TABLE auto_update_multi_user ADD (age INTEGER, email VARCHAR(128));",
+                    executedSqlList.get(0));
             assertTrue(columnExists(connection, "AUTO_UPDATE_MULTI_USER", "AGE"));
             assertTrue(columnExists(connection, "AUTO_UPDATE_MULTI_USER", "EMAIL"));
             assertEquals(1, columnCount(connection, "AUTO_UPDATE_MULTI_USER", "AGE"));
             assertEquals(1, columnCount(connection, "AUTO_UPDATE_MULTI_USER", "EMAIL"));
         }
+    }
+
+    @Test
+    void h2ShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openConnection("boolean_default")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
+                    DbType.H2,
+                    connection,
+                    "BOOLEAN",
+                    "FALSE",
+                    "TRUE"
+            );
+        }
+    }
+
+    @Test
+    void h2ShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openConnection("datetime_default")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateTimeDefaultValueFlow(
+                    DbType.H2,
+                    connection,
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
+    void addMultipleColumnsShouldUseDialectSpecificStatements() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+
+        assertEquals("ALTER TABLE auto_update_multi_user ADD (age INTEGER, email VARCHAR(128));",
+                builder.addColumnSqlList(DbType.H2, UpdateMultiUserV2.class,
+                        columns(DbType.H2, UpdateMultiUserV2.class, "age", "email")).get(0));
+        assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);",
+                builder.addColumnSqlList(DbType.MYSQL, UpdateMultiUserV2.class,
+                        columns(DbType.MYSQL, UpdateMultiUserV2.class, "age", "email")).get(0));
+        assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);",
+                builder.addColumnSqlList(DbType.PGSQL, UpdateMultiUserV2.class,
+                        columns(DbType.PGSQL, UpdateMultiUserV2.class, "age", "email")).get(0));
+        assertEquals("ALTER TABLE auto_update_multi_user ADD (age NUMBER(10), email VARCHAR2(128));",
+                builder.addColumnSqlList(DbType.ORACLE, UpdateMultiUserV2.class,
+                        columns(DbType.ORACLE, UpdateMultiUserV2.class, "age", "email")).get(0));
+        assertEquals("ALTER TABLE auto_update_multi_user ADD age INTEGER, email NVARCHAR(128);",
+                builder.addColumnSqlList(DbType.SQL_SERVER, UpdateMultiUserV2.class,
+                        columns(DbType.SQL_SERVER, UpdateMultiUserV2.class, "age", "email")).get(0));
+        assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER ADD COLUMN email VARCHAR(128);",
+                builder.addColumnSqlList(DbType.DB2, UpdateMultiUserV2.class,
+                        columns(DbType.DB2, UpdateMultiUserV2.class, "age", "email")).get(0));
+        assertEquals(java.util.Arrays.asList(
+                        "ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER;",
+                        "ALTER TABLE auto_update_multi_user ADD COLUMN email VARCHAR(128);"
+                ),
+                builder.addColumnSqlList(DbType.SQLITE, UpdateMultiUserV2.class,
+                        columns(DbType.SQLITE, UpdateMultiUserV2.class, "age", "email")));
     }
 
     @Test
@@ -654,6 +713,25 @@ class DDLAutoTest {
         assertTrue(exception.getMessage().contains("UNIQUE"));
     }
 
+    private List<ColumnInfo> columns(DbType dbType, Class<?> entityClass, String... columnNames) {
+        List<ColumnInfo> allColumns = new DefaultDDLBuilder().getColumns(dbType, entityClass);
+        List<ColumnInfo> result = new java.util.ArrayList<>(columnNames.length);
+        for (String columnName : columnNames) {
+            ColumnInfo matchedColumn = null;
+            for (ColumnInfo column : allColumns) {
+                if (columnName.equals(column.getName())) {
+                    matchedColumn = column;
+                    break;
+                }
+            }
+            if (matchedColumn == null) {
+                throw new AssertionError("Column not found: " + columnName);
+            }
+            result.add(matchedColumn);
+        }
+        return result;
+    }
+
     private Connection openConnection(String databaseName) throws SQLException {
         return DriverManager.getConnection("jdbc:h2:mem:auto_table_" + databaseName + ";DB_CLOSE_DELAY=-1");
     }
@@ -888,6 +966,19 @@ class DDLAutoTest {
 
         @ColumnDefinition(length = 128)
         private String email;
+    }
+
+    @Table("auto_h2_boolean_default_user")
+    static class H2BooleanDefaultUser {
+
+        @TableId
+        private Long id;
+
+        @ColumnDefinition(defaultValue = "FALSE")
+        private Boolean defaultFalse;
+
+        @ColumnDefinition(defaultValue = "TRUE")
+        private Boolean defaultTrue;
     }
 
     @Table("auto_batch_user")

@@ -3,6 +3,7 @@ package cn.xbatis.ddl.auto;
 import cn.xbatis.core.XbatisGlobalConfig;
 import cn.xbatis.core.db.reflect.TableFieldInfo;
 import cn.xbatis.db.annotations.ColumnDefinition;
+import db.sql.api.IDbType;
 
 import java.lang.annotation.Annotation;
 import java.util.Arrays;
@@ -25,7 +26,7 @@ class ColumnDefinitionValue implements ColumnDefinition {
         this.defaultValue = defaultValue;
     }
 
-    static ColumnDefinition of(TableFieldInfo tableFieldInfo, ColumnDefinition definition) {
+    static ColumnDefinition of(IDbType dbType, TableFieldInfo tableFieldInfo, ColumnDefinition definition) {
         ColumnDefinition resolvedDefinition = definition == null ? DEFAULT : definition;
         if (!resolvedDefinition.defaultValue().isEmpty()) {
             return resolvedDefinition;
@@ -49,20 +50,17 @@ class ColumnDefinitionValue implements ColumnDefinition {
         }
 
         if (XbatisGlobalConfig.isDynamicValueKeyFormat(tableFieldDefaultValue)) {
-            //忽略动态值
-            tableFieldDefaultValue = "";
+            tableFieldDefaultValue = DateDefaultValueResolver.resolve(dbType,
+                    tableFieldInfo.getFieldInfo().getTypeClass(),
+                    tableFieldDefaultValue);
         }
 
         if (tableFieldDefaultValue.isEmpty()) {
             return resolvedDefinition;
         }
-        if (tableFieldInfo.getFieldInfo().getTypeClass() == Boolean.class) {
-            if ("0".equals(tableFieldDefaultValue)) {
-                tableFieldDefaultValue = "FALSE";
-            } else if ("1".equals(tableFieldDefaultValue)) {
-                tableFieldDefaultValue = "TRUE";
-            }
-        }
+        tableFieldDefaultValue = BooleanDefaultValueResolver.resolve(dbType,
+                tableFieldInfo.getFieldInfo().getTypeClass(),
+                tableFieldDefaultValue);
         return new ColumnDefinitionValue(resolvedDefinition, tableFieldDefaultValue);
     }
 

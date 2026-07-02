@@ -105,6 +105,6 @@ public class ColumnInfo {
                 definition = definitions[0];
             }
         }
-        return ColumnDefinitionValue.of(tableFieldInfo, definition);
+        return ColumnDefinitionValue.of(dbType,tableFieldInfo, definition);
     }
 }

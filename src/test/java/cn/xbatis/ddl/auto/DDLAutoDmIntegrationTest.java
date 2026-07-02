@@ -37,6 +37,33 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
     }
 
     @Test
+    void dmShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        assertMultiColumnAddColumnFlow(
+                DATABASE,
+                "ALTER TABLE auto_multi_column_add_user ADD (age NUMBER(10), email VARCHAR2(128));"
+        );
+    }
+
+    @Test
+    void dmShouldCreateBooleanDefaultValueColumns() throws Exception {
+        assertBooleanDefaultValueFlow(
+                DATABASE,
+                "NUMBER(1)",
+                "0",
+                "1"
+        );
+    }
+
+    @Test
+    void dmShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        assertDateTimeDefaultValueFlow(
+                DATABASE,
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+        );
+    }
+
+    @Test
     void dmShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         assertIntLongAutoAndManualIdFlow(
                 DATABASE,

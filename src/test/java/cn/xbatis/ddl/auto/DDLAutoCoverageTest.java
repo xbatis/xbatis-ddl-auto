@@ -15,6 +15,9 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.sql.*;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.logging.Logger;
 
@@ -564,6 +567,27 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void createSqlShouldResolveDynamicNowDefaultValueByDbType() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+
+        assertDynamicNowDefaultSql(builder, DbType.H2, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT CURRENT_DATE");
+        assertDynamicNowDefaultSql(builder, DbType.PGSQL, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT CURRENT_DATE");
+        assertDynamicNowDefaultSql(builder, DbType.GAUSS, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT CURRENT_DATE");
+        assertDynamicNowDefaultSql(builder, DbType.KING_BASE, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT CURRENT_DATE");
+        assertDynamicNowDefaultSql(builder, DbType.HIGHGO, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT CURRENT_DATE");
+        assertDynamicNowDefaultSql(builder, DbType.SQLITE, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT CURRENT_DATE");
+        assertDynamicNowDefaultSql(builder, DbType.MYSQL, "DATETIME DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT (CURRENT_DATE)");
+        assertDynamicNowDefaultSql(builder, DbType.MARIA_DB, "DATETIME DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT (CURRENT_DATE)");
+        assertDynamicNowDefaultSql(builder, DbType.OCEAN_BASE, "DATETIME DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT (CURRENT_DATE)");
+        assertDynamicNowDefaultSql(builder, DbType.COBAR, "DATETIME DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT (CURRENT_DATE)");
+        assertDynamicNowDefaultSql(builder, DbType.SQL_SERVER, "DATETIME2 DEFAULT SYSDATETIME()", "DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()", "DATE DEFAULT (CAST(GETDATE() AS DATE))");
+        assertDynamicNowDefaultSql(builder, DbType.ORACLE, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT TRUNC(SYSDATE)");
+        assertDynamicNowDefaultSql(builder, DbType.DM, "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP", "DATE DEFAULT TRUNC(SYSDATE)");
+        assertDynamicNowDefaultSql(builder, DbType.DB2, "TIMESTAMP DEFAULT CURRENT TIMESTAMP", "TIMESTAMP DEFAULT CURRENT TIMESTAMP", "DATE DEFAULT CURRENT DATE");
+        assertDynamicNowDefaultSql(builder, DbType.CLICK_HOUSE, "TIMESTAMP DEFAULT now()", "DateTime64(3, 'UTC') DEFAULT now()", "DATE DEFAULT today()");
+    }
+
+    @Test
     void createIndexSqlShouldCoverNamedUniqueCompositeIndex() {
         ExposedSqlBuilder builder = new ExposedSqlBuilder();
         TableInfo tableInfo = Tables.get(FacadeUser.class);
@@ -904,6 +928,17 @@ class DDLAutoCoverageTest {
                 .filter(item -> item.getName().equals(columnName))
                 .findFirst()
                 .orElseThrow(AssertionError::new);
+    }
+
+    private static void assertDynamicNowDefaultSql(DefaultDDLBuilder builder, DbType dbType,
+                                                   String dateTimeColumnSql,
+                                                   String instantColumnSql,
+                                                   String dateColumnSql) {
+        String sql = builder.buildCreateTableSql(dbType, DynamicNowDefaultUser.class);
+        assertTrue(sql.contains("created_at " + dateTimeColumnSql), dbType.getName() + " created_at SQL: " + sql);
+        assertTrue(sql.contains("event_at " + instantColumnSql), dbType.getName() + " event_at SQL: " + sql);
+        assertTrue(sql.contains("biz_date " + dateColumnSql), dbType.getName() + " biz_date SQL: " + sql);
+        assertTrue(sql.contains("today_date " + dateColumnSql), dbType.getName() + " today_date SQL: " + sql);
     }
 
     private static List<TableInfo> repeatedTableInfos(Class<?> entityClass, int count) {
@@ -1857,6 +1892,25 @@ class DDLAutoCoverageTest {
 
         @TableField(defaultValue = "{NOW}")
         private String dynamicValue;
+    }
+
+    @Table("dynamic_now_default_user")
+    static class DynamicNowDefaultUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDateTime createdAt;
+
+        @TableField(defaultValue = "{NOW}")
+        private Instant eventAt;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDate bizDate;
+
+        @TableField(defaultValue = "{TODAY}")
+        private LocalDate todayDate;
     }
 
     @Table("composite_primary_key_user")

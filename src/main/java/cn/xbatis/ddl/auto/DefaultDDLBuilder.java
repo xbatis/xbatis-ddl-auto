@@ -417,10 +417,69 @@ public class DefaultDDLBuilder implements DDLBuilder {
 
         DDLContext context = createContext(dbType, tableInfo, addColumns, tableName);
         List<String> sqlList = new ArrayList<>(addColumns.size());
+        if (context.columns.size() == 1 || !supportsMultipleAddColumns(context.dbType)) {
+            for (ColumnInfo column : context.columns) {
+                appendAddColumnSqlList(context, column, sqlList);
+            }
+            return sqlList;
+        }
+        sqlList.add(buildAddColumnsSql(context));
         for (ColumnInfo column : context.columns) {
-            appendAddColumnSqlList(context, column, sqlList);
+            appendAddColumnSupplementSqlList(context, column, sqlList);
         }
         return sqlList;
+    }
+
+    /**
+     * 根据已解析的实体上下文批量生成单条 ALTER TABLE ADD COLUMN SQL。
+     */
+    protected String buildAddColumnsSql(DDLContext context) {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("ALTER TABLE ");
+        appendTableName(ddl, context);
+        if (usesParenthesizedAddColumns(context.dbType)) {
+            ddl.append(" ADD (");
+            appendAddColumnDefinitions(ddl, context);
+            ddl.append(");");
+            return ddl.toString();
+        }
+        ddl.append(" ADD ");
+        if (usesRepeatedAddColumnClauses(context.dbType)) {
+            appendRepeatedAddColumnDefinitions(ddl, context);
+        } else {
+            appendAddColumnDefinitions(ddl, context);
+        }
+        ddl.append(";");
+        return ddl.toString();
+    }
+
+    /**
+     * 追加批量 ADD COLUMN 的列定义列表。
+     */
+    protected void appendAddColumnDefinitions(StringBuilder ddl, DDLContext context) {
+        for (int i = 0; i < context.columns.size(); i++) {
+            if (i > 0) {
+                ddl.append(", ");
+            }
+            ddl.append(buildColumnSql(context, context.columns.get(i), false,
+                    supportsInlineUniqueInAddColumn(context.dbType)).trim());
+        }
+    }
+
+    /**
+     * 追加 PostgreSQL/MySQL 风格的重复 ADD COLUMN 子句。
+     */
+    protected void appendRepeatedAddColumnDefinitions(StringBuilder ddl, DDLContext context) {
+        for (int i = 0; i < context.columns.size(); i++) {
+            if (i > 0) {
+                ddl.append(context.dbType == DbType.DB2 ? " ADD " : ", ADD ");
+            }
+            if (supportsAddColumnKeyword(context.dbType)) {
+                ddl.append("COLUMN ");
+            }
+            ddl.append(buildColumnSql(context, context.columns.get(i), false,
+                    supportsInlineUniqueInAddColumn(context.dbType)).trim());
+        }
     }
 
     /**
@@ -442,6 +501,13 @@ public class DefaultDDLBuilder implements DDLBuilder {
      */
     protected void appendAddColumnSqlList(DDLContext context, ColumnInfo column, List<String> sqlList) {
         sqlList.add(buildAddColumnSql(context, column));
+        appendAddColumnSupplementSqlList(context, column, sqlList);
+    }
+
+    /**
+     * 追加新增列后的附属 DDL。
+     */
+    protected void appendAddColumnSupplementSqlList(DDLContext context, ColumnInfo column, List<String> sqlList) {
         String commentSql = buildColumnCommentSql(context, column);
         if (!isBlank(commentSql)) {
             sqlList.add(commentSql);
@@ -1605,6 +1671,27 @@ public class DefaultDDLBuilder implements DDLBuilder {
      */
     protected boolean supportsAddColumnKeyword(IDbType dbType) {
         return dialect.supportsAddColumnKeyword(dbType);
+    }
+
+    /**
+     * 判断数据库是否支持单条 ALTER TABLE 新增多个字段。
+     */
+    protected boolean supportsMultipleAddColumns(IDbType dbType) {
+        return dialect.supportsMultipleAddColumns(dbType);
+    }
+
+    /**
+     * 判断批量 ADD COLUMN 是否使用 ADD (...) 语法。
+     */
+    protected boolean usesParenthesizedAddColumns(IDbType dbType) {
+        return isOracle(dbType) || dbType == DbType.H2;
+    }
+
+    /**
+     * 判断批量 ADD COLUMN 是否需要重复 ADD COLUMN 子句。
+     */
+    protected boolean usesRepeatedAddColumnClauses(IDbType dbType) {
+        return !isSqlServer(dbType) && !usesParenthesizedAddColumns(dbType);
     }
 
     /**

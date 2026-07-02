@@ -158,6 +158,42 @@ class DDLAutoKingbaseIntegrationTest extends DDLAutoExternalDatabaseIntegrationS
     }
 
     @Test
+    void kingbaseShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertMultiColumnAddColumnFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void kingbaseShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertBooleanDefaultValueFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "BOOLEAN",
+                    "FALSE",
+                    "TRUE"
+            );
+        }
+    }
+
+    @Test
+    void kingbaseShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertDateTimeDefaultValueFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
     void kingbaseShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertIntLongAutoAndManualIdFlow(

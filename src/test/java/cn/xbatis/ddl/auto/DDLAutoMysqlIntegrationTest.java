@@ -98,6 +98,42 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
+    void mysqlShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertMultiColumnAddColumnFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void mysqlShouldCreateBooleanDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "TINYINT(1)",
+                    "0",
+                    "1"
+            );
+        }
+    }
+
+    @Test
+    void mysqlShouldCreateDateTimeDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateTimeDefaultValueFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                    "event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            );
+        }
+    }
+
+    @Test
     void mysqlShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

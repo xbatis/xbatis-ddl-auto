@@ -6,6 +6,7 @@ import db.sql.api.DbType;
 import db.sql.api.IDbType;
 
 import java.sql.*;
+import java.time.Instant;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,6 +27,12 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
     private static final String MULTI_TABLE_SEQUENCE_TABLE = "auto_multi_table_seq_user";
 
     private static final String MULTI_TABLE_SEQUENCE = "auto_multi_table_seq";
+
+    private static final String MULTI_COLUMN_ADD_TABLE = "auto_multi_column_add_user";
+
+    private static final String BOOLEAN_DEFAULT_TABLE = "auto_boolean_default_user";
+
+    private static final String DATE_TIME_DEFAULT_TABLE = "auto_datetime_default_user";
 
     static void assertCreateUpdateFlow(DatabaseCase databaseCase,
                                        Class<?> v1Entity,
@@ -113,6 +120,232 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
     static void assertMultiTableSequenceAndIndexFlow(IDbType dbType, Connection connection) throws Exception {
         assertMultiTableFlow(dbType, connection, MultiTableSequenceUserV1.class, MultiTableSequenceUserV2.class,
                 MULTI_TABLE_SEQUENCE_TABLE, MULTI_TABLE_SEQUENCE);
+    }
+
+    static void assertMultiColumnAddColumnFlow(DatabaseCase databaseCase, String... expectedAddColumnSqlList) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertMultiColumnAddColumnFlow(databaseCase.dbType, connection, expectedAddColumnSqlList);
+        }
+    }
+
+    static void assertMultiColumnAddColumnFlow(IDbType dbType,
+                                               Connection connection,
+                                               String... expectedAddColumnSqlList) throws Exception {
+        dropTestTable(connection, MULTI_COLUMN_ADD_TABLE);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(MultiColumnAddUserV1.class)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, MULTI_COLUMN_ADD_TABLE));
+            assertTrue(columnExists(connection, MULTI_COLUMN_ADD_TABLE, "id"));
+            assertTrue(columnExists(connection, MULTI_COLUMN_ADD_TABLE, "username"));
+            assertFalse(columnExists(connection, MULTI_COLUMN_ADD_TABLE, "age"));
+            assertFalse(columnExists(connection, MULTI_COLUMN_ADD_TABLE, "email"));
+
+            List<String> updateExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, updateExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.UPDATE)
+                    .add(MultiColumnAddUserV2.class)
+                    .execute(connection);
+
+            assertEquals(Arrays.asList(expectedAddColumnSqlList), updateExecutedSqlList,
+                    "Expected ADD COLUMN SQL list: " + updateExecutedSqlList);
+            assertTrue(columnExists(connection, MULTI_COLUMN_ADD_TABLE, "age"));
+            assertTrue(columnExists(connection, MULTI_COLUMN_ADD_TABLE, "email"));
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.UPDATE)
+                    .add(MultiColumnAddUserV2.class)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after multi-column update flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, MULTI_COLUMN_ADD_TABLE);
+        }
+    }
+
+    static void assertBooleanDefaultValueFlow(DatabaseCase databaseCase,
+                                              Class<?> entityClass,
+                                              String expectedDefaultFalseSql,
+                                              String expectedDefaultTrueSql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertBooleanDefaultValueFlow(databaseCase.dbType, connection, entityClass,
+                    expectedDefaultFalseSql, expectedDefaultTrueSql);
+        }
+    }
+
+    static void assertBooleanDefaultValueFlow(IDbType dbType,
+                                              Connection connection,
+                                              Class<?> entityClass,
+                                              String expectedDefaultFalseSql,
+                                              String expectedDefaultTrueSql) throws Exception {
+        dropTestTable(connection, BOOLEAN_DEFAULT_TABLE);
+        try {
+            List<String> executedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, executedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .add(entityClass)
+                    .execute(connection);
+
+            assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedDefaultFalseSql)),
+                    "Expected boolean false default SQL [" + expectedDefaultFalseSql + "]: " + executedSqlList);
+            assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedDefaultTrueSql)),
+                    "Expected boolean true default SQL [" + expectedDefaultTrueSql + "]: " + executedSqlList);
+            assertTrue(tableExists(connection, BOOLEAN_DEFAULT_TABLE));
+            assertTrue(columnExists(connection, BOOLEAN_DEFAULT_TABLE, "default_false"));
+            assertTrue(columnExists(connection, BOOLEAN_DEFAULT_TABLE, "default_true"));
+        } finally {
+            dropTestTable(connection, BOOLEAN_DEFAULT_TABLE);
+        }
+    }
+
+    static void assertBooleanDefaultValueFlow(DatabaseCase databaseCase,
+                                              String expectedColumnType,
+                                              String expectedFalseDefaultValue,
+                                              String expectedTrueDefaultValue) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertBooleanDefaultValueFlow(databaseCase.dbType, connection, expectedColumnType,
+                    expectedFalseDefaultValue, expectedTrueDefaultValue);
+        }
+    }
+
+    static void assertBooleanDefaultValueFlow(IDbType dbType,
+                                              Connection connection,
+                                              String expectedColumnType,
+                                              String expectedFalseDefaultValue,
+                                              String expectedTrueDefaultValue) throws Exception {
+        dropTestTable(connection, BOOLEAN_DEFAULT_TABLE);
+        try {
+            List<String> executedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, executedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .add(BooleanDefaultVariantUser.class)
+                    .execute(connection);
+
+            assertBooleanDefaultSql(executedSqlList, "numeric_false", expectedColumnType, expectedFalseDefaultValue);
+            assertBooleanDefaultSql(executedSqlList, "numeric_true", expectedColumnType, expectedTrueDefaultValue);
+            assertBooleanDefaultSql(executedSqlList, "literal_false", expectedColumnType, expectedFalseDefaultValue);
+            assertBooleanDefaultSql(executedSqlList, "literal_true", expectedColumnType, expectedTrueDefaultValue);
+            assertTrue(tableExists(connection, BOOLEAN_DEFAULT_TABLE));
+            assertTrue(columnExists(connection, BOOLEAN_DEFAULT_TABLE, "numeric_false"));
+            assertTrue(columnExists(connection, BOOLEAN_DEFAULT_TABLE, "numeric_true"));
+            assertTrue(columnExists(connection, BOOLEAN_DEFAULT_TABLE, "literal_false"));
+            assertTrue(columnExists(connection, BOOLEAN_DEFAULT_TABLE, "literal_true"));
+            assertBooleanDefaultsGeneratedByDatabase(connection);
+        } finally {
+            dropTestTable(connection, BOOLEAN_DEFAULT_TABLE);
+        }
+    }
+
+    private static void assertBooleanDefaultSql(List<String> executedSqlList,
+                                                String columnName,
+                                                String expectedColumnType,
+                                                String expectedDefaultValue) {
+        String expectedSql = columnName + " " + expectedColumnType + " DEFAULT " + expectedDefaultValue;
+        assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedSql)),
+                "Expected boolean default SQL [" + expectedSql + "]: " + executedSqlList);
+    }
+
+    static void assertDateTimeDefaultValueFlow(DatabaseCase databaseCase,
+                                               String expectedDateTimeSql,
+                                               String expectedInstantSql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertDateTimeDefaultValueFlow(databaseCase.dbType, connection, expectedDateTimeSql, expectedInstantSql);
+        }
+    }
+
+    static void assertDateTimeDefaultValueFlow(IDbType dbType,
+                                               Connection connection,
+                                               String expectedDateTimeSql,
+                                               String expectedInstantSql) throws Exception {
+        dropTestTable(connection, DATE_TIME_DEFAULT_TABLE);
+        try {
+            List<String> executedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, executedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .add(DateTimeDefaultUser.class)
+                    .execute(connection);
+
+            assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedDateTimeSql)),
+                    "Expected LocalDateTime default SQL [" + expectedDateTimeSql + "]: " + executedSqlList);
+            assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedInstantSql)),
+                    "Expected Instant default SQL [" + expectedInstantSql + "]: " + executedSqlList);
+            assertTrue(tableExists(connection, DATE_TIME_DEFAULT_TABLE));
+            assertTrue(columnExists(connection, DATE_TIME_DEFAULT_TABLE, "created_at"));
+            assertTrue(columnExists(connection, DATE_TIME_DEFAULT_TABLE, "event_at"));
+            assertDateTimeDefaultsGeneratedByDatabase(connection);
+        } finally {
+            dropTestTable(connection, DATE_TIME_DEFAULT_TABLE);
+        }
+    }
+
+    private static void assertBooleanDefaultsGeneratedByDatabase(Connection connection) throws SQLException {
+        insertDefaultOnlyRow(connection, BOOLEAN_DEFAULT_TABLE, 1L);
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT numeric_false, numeric_true, literal_false, literal_true FROM " + BOOLEAN_DEFAULT_TABLE + " WHERE id = ?"
+        )) {
+            statement.setLong(1, 1L);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                assertTrue(resultSet.next(), "Expected inserted boolean default row");
+                assertBooleanValue(false, resultSet.getObject("numeric_false"), "numeric_false");
+                assertBooleanValue(true, resultSet.getObject("numeric_true"), "numeric_true");
+                assertBooleanValue(false, resultSet.getObject("literal_false"), "literal_false");
+                assertBooleanValue(true, resultSet.getObject("literal_true"), "literal_true");
+            }
+        }
+    }
+
+    private static void assertDateTimeDefaultsGeneratedByDatabase(Connection connection) throws SQLException {
+        insertDefaultOnlyRow(connection, DATE_TIME_DEFAULT_TABLE, 1L);
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT created_at, event_at FROM " + DATE_TIME_DEFAULT_TABLE + " WHERE id = ?"
+        )) {
+            statement.setLong(1, 1L);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                assertTrue(resultSet.next(), "Expected inserted date/time default row");
+                assertNotNull(resultSet.getObject("created_at"), "Expected created_at database default value");
+                assertNotNull(resultSet.getObject("event_at"), "Expected event_at database default value");
+            }
+        }
+    }
+
+    private static void insertDefaultOnlyRow(Connection connection, String tableName, long id) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO " + tableName + " (id) VALUES (?)")) {
+            statement.setLong(1, id);
+            assertEquals(1, statement.executeUpdate(), "Expected one inserted default row for " + tableName);
+        }
+    }
+
+    private static void assertBooleanValue(boolean expected, Object actual, String columnName) {
+        assertNotNull(actual, "Expected " + columnName + " database default value");
+        Boolean actualBoolean = toBoolean(actual);
+        assertNotNull(actualBoolean, "Expected " + columnName + " to be readable as boolean, actual: "
+                + actual + " (" + actual.getClass().getName() + ")");
+        assertEquals(expected, actualBoolean, "Unexpected database default value for " + columnName);
+    }
+
+    private static Boolean toBoolean(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        if (value instanceof String) {
+            String normalizedValue = ((String) value).trim().toUpperCase(Locale.ROOT);
+            if ("0".equals(normalizedValue) || "FALSE".equals(normalizedValue)) {
+                return Boolean.FALSE;
+            }
+            if ("1".equals(normalizedValue) || "TRUE".equals(normalizedValue)) {
+                return Boolean.TRUE;
+            }
+        }
+        return null;
     }
 
     private static void assertMultiTableFlow(IDbType dbType,
@@ -606,6 +839,89 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @ColumnDefinition(length = 128)
         private String email;
+    }
+
+    @Table(MULTI_COLUMN_ADD_TABLE)
+    static class MultiColumnAddUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false)
+        private String username;
+    }
+
+    @Table(MULTI_COLUMN_ADD_TABLE)
+    static class MultiColumnAddUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false)
+        private String username;
+
+        private Integer age;
+
+        @ColumnDefinition(length = 128)
+        private String email;
+    }
+
+    @Table(BOOLEAN_DEFAULT_TABLE)
+    static class BooleanNumericDefaultUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(defaultValue = "0")
+        private Boolean defaultFalse;
+
+        @ColumnDefinition(defaultValue = "1")
+        private Boolean defaultTrue;
+    }
+
+    @Table(BOOLEAN_DEFAULT_TABLE)
+    static class BooleanLiteralDefaultUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(defaultValue = "FALSE")
+        private Boolean defaultFalse;
+
+        @ColumnDefinition(defaultValue = "TRUE")
+        private Boolean defaultTrue;
+    }
+
+    @Table(BOOLEAN_DEFAULT_TABLE)
+    static class BooleanDefaultVariantUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @TableField(defaultValue = "0")
+        private Boolean numericFalse;
+
+        @TableField(defaultValue = "1")
+        private Boolean numericTrue;
+
+        @TableField(defaultValue = "false")
+        private Boolean literalFalse;
+
+        @TableField(defaultValue = "true")
+        private Boolean literalTrue;
+    }
+
+    @Table(DATE_TIME_DEFAULT_TABLE)
+    static class DateTimeDefaultUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @TableField(defaultValue = "{NOW}")
+        private java.time.LocalDateTime createdAt;
+
+        @TableField(defaultValue = "{NOW}")
+        private Instant eventAt;
     }
 
     @Table(MULTI_TABLE_SEQUENCE_TABLE)

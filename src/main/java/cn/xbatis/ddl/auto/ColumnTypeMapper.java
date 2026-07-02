@@ -11,6 +11,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 import java.util.Date;
 import java.util.Objects;
 import java.util.UUID;
@@ -71,7 +73,10 @@ class ColumnTypeMapper {
         if (type == LocalTime.class || type == Time.class) {
             return getTimeType(dbType);
         }
-        if (type == LocalDateTime.class || type == Timestamp.class || type == Instant.class || Date.class.isAssignableFrom(type)) {
+        if (type == Instant.class || type == OffsetDateTime.class || type == ZonedDateTime.class) {
+            return getDateTimeWithTimeZoneType(dbType);
+        }
+        if (type == LocalDateTime.class || type == Timestamp.class || Date.class.isAssignableFrom(type)) {
             return getDateTimeType(dbType);
         }
         return getStringType(dbType, getLength(definition, 255));
@@ -115,6 +120,10 @@ class ColumnTypeMapper {
 
     String getDateTimeType(IDbType dbType) {
         return dialect.getDateTimeType(dbType);
+    }
+
+    String getDateTimeWithTimeZoneType(IDbType dbType) {
+        return dialect.getDateTimeWithTimeZoneType(dbType);
     }
 
     int getLength(ColumnDefinition columnDefinition, int defaultLength) {
