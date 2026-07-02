@@ -64,6 +64,15 @@ class DDLAutoMariadbIntegrationTest extends DDLAutoExternalDatabaseIntegrationSu
     }
 
     @Test
+    void mariadbShouldCreateDateDefaultValueColumns() throws Exception {
+        assertDateDefaultValueFlow(
+                DATABASE,
+                "biz_date DATE DEFAULT (CURRENT_DATE)",
+                "today_date DATE DEFAULT (CURRENT_DATE)"
+        );
+    }
+
+    @Test
     void mariadbShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         assertIntLongAutoAndManualIdFlow(
                 DATABASE,

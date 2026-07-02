@@ -64,6 +64,15 @@ class DDLAutoOceanbaseIntegrationTest extends DDLAutoExternalDatabaseIntegration
     }
 
     @Test
+    void oceanbaseShouldCreateDateDefaultValueColumns() throws Exception {
+        assertDateDefaultValueFlow(
+                DATABASE,
+                "biz_date DATE DEFAULT (CURRENT_DATE)",
+                "today_date DATE DEFAULT (CURRENT_DATE)"
+        );
+    }
+
+    @Test
     void oceanbaseShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         assertIntLongAutoAndManualIdFlow(
                 DATABASE,

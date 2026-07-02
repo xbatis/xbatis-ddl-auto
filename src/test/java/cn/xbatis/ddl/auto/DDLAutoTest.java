@@ -179,6 +179,18 @@ class DDLAutoTest {
     }
 
     @Test
+    void h2ShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openConnection("date_default")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.H2,
+                    connection,
+                    "biz_date DATE DEFAULT CURRENT_DATE",
+                    "today_date DATE DEFAULT CURRENT_DATE"
+            );
+        }
+    }
+
+    @Test
     void addMultipleColumnsShouldUseDialectSpecificStatements() {
         DefaultDDLBuilder builder = new DefaultDDLBuilder();
 

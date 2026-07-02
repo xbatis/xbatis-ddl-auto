@@ -134,6 +134,18 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
+    void mysqlShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "biz_date DATE DEFAULT (CURRENT_DATE)",
+                    "today_date DATE DEFAULT (CURRENT_DATE)"
+            );
+        }
+    }
+
+    @Test
     void mysqlShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

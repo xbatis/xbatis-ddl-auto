@@ -131,6 +131,18 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "biz_date DATE DEFAULT (CAST(GETDATE() AS DATE))",
+                    "today_date DATE DEFAULT (CAST(GETDATE() AS DATE))"
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

@@ -87,6 +87,18 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
     }
 
     @Test
+    void gaussShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertDateDefaultValueFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "biz_date DATE DEFAULT CURRENT_DATE",
+                    "today_date DATE DEFAULT CURRENT_DATE"
+            );
+        }
+    }
+
+    @Test
     void gaussShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertIntLongAutoAndManualIdFlow(

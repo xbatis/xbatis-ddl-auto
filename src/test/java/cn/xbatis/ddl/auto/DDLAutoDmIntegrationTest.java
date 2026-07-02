@@ -64,6 +64,15 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
     }
 
     @Test
+    void dmShouldCreateDateDefaultValueColumns() throws Exception {
+        assertDateDefaultValueFlow(
+                DATABASE,
+                "biz_date DATE DEFAULT TRUNC(SYSDATE)",
+                "today_date DATE DEFAULT TRUNC(SYSDATE)"
+        );
+    }
+
+    @Test
     void dmShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         assertIntLongAutoAndManualIdFlow(
                 DATABASE,

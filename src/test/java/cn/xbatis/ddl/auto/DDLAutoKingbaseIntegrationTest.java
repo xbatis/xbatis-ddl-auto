@@ -194,6 +194,18 @@ class DDLAutoKingbaseIntegrationTest extends DDLAutoExternalDatabaseIntegrationS
     }
 
     @Test
+    void kingbaseShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertDateDefaultValueFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "biz_date DATE DEFAULT CURRENT_DATE",
+                    "today_date DATE DEFAULT CURRENT_DATE"
+            );
+        }
+    }
+
+    @Test
     void kingbaseShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertIntLongAutoAndManualIdFlow(

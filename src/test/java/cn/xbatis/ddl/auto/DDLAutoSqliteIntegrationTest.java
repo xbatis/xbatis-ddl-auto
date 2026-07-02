@@ -115,6 +115,18 @@ class DDLAutoSqliteIntegrationTest {
     }
 
     @Test
+    void sqliteShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.SQLITE,
+                    connection,
+                    "biz_date DATE DEFAULT CURRENT_DATE",
+                    "today_date DATE DEFAULT CURRENT_DATE"
+            );
+        }
+    }
+
+    @Test
     void sqliteShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

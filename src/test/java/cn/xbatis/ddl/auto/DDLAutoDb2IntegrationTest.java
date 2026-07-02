@@ -212,6 +212,18 @@ class DDLAutoDb2IntegrationTest {
     }
 
     @Test
+    void db2ShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.DB2,
+                    connection,
+                    "biz_date DATE DEFAULT CURRENT DATE",
+                    "today_date DATE DEFAULT CURRENT DATE"
+            );
+        }
+    }
+
+    @Test
     void db2ShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

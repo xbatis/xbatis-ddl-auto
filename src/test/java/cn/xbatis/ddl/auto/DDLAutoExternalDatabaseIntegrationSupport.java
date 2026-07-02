@@ -32,6 +32,8 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
     private static final String BOOLEAN_DEFAULT_TABLE = "auto_boolean_default_user";
 
+    private static final String DATE_DEFAULT_TABLE = "auto_date_default_user";
+
     private static final String DATE_TIME_DEFAULT_TABLE = "auto_datetime_default_user";
 
     static void assertCreateUpdateFlow(DatabaseCase databaseCase,
@@ -284,6 +286,39 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         }
     }
 
+    static void assertDateDefaultValueFlow(DatabaseCase databaseCase,
+                                           String expectedNowDateSql,
+                                           String expectedTodayDateSql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertDateDefaultValueFlow(databaseCase.dbType, connection, expectedNowDateSql, expectedTodayDateSql);
+        }
+    }
+
+    static void assertDateDefaultValueFlow(IDbType dbType,
+                                           Connection connection,
+                                           String expectedNowDateSql,
+                                           String expectedTodayDateSql) throws Exception {
+        dropTestTable(connection, DATE_DEFAULT_TABLE);
+        try {
+            List<String> executedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, executedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .add(DateDefaultUser.class)
+                    .execute(connection);
+
+            assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedNowDateSql)),
+                    "Expected LocalDate {NOW} default SQL [" + expectedNowDateSql + "]: " + executedSqlList);
+            assertTrue(executedSqlList.stream().anyMatch(sql -> sql.contains(expectedTodayDateSql)),
+                    "Expected LocalDate {TODAY} default SQL [" + expectedTodayDateSql + "]: " + executedSqlList);
+            assertTrue(tableExists(connection, DATE_DEFAULT_TABLE));
+            assertTrue(columnExists(connection, DATE_DEFAULT_TABLE, "biz_date"));
+            assertTrue(columnExists(connection, DATE_DEFAULT_TABLE, "today_date"));
+            assertDateDefaultsGeneratedByDatabase(connection);
+        } finally {
+            dropTestTable(connection, DATE_DEFAULT_TABLE);
+        }
+    }
+
     private static void assertBooleanDefaultsGeneratedByDatabase(Connection connection) throws SQLException {
         insertDefaultOnlyRow(connection, BOOLEAN_DEFAULT_TABLE, 1L);
         try (PreparedStatement statement = connection.prepareStatement(
@@ -296,6 +331,20 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                 assertBooleanValue(true, resultSet.getObject("numeric_true"), "numeric_true");
                 assertBooleanValue(false, resultSet.getObject("literal_false"), "literal_false");
                 assertBooleanValue(true, resultSet.getObject("literal_true"), "literal_true");
+            }
+        }
+    }
+
+    private static void assertDateDefaultsGeneratedByDatabase(Connection connection) throws SQLException {
+        insertDefaultOnlyRow(connection, DATE_DEFAULT_TABLE, 1L);
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT biz_date, today_date FROM " + DATE_DEFAULT_TABLE + " WHERE id = ?"
+        )) {
+            statement.setLong(1, 1L);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                assertTrue(resultSet.next(), "Expected inserted date default row");
+                assertNotNull(resultSet.getObject("biz_date"), "Expected biz_date database default value");
+                assertNotNull(resultSet.getObject("today_date"), "Expected today_date database default value");
             }
         }
     }
@@ -909,6 +958,19 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @TableField(defaultValue = "true")
         private Boolean literalTrue;
+    }
+
+    @Table(DATE_DEFAULT_TABLE)
+    static class DateDefaultUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @TableField(defaultValue = "{NOW}")
+        private java.time.LocalDate bizDate;
+
+        @TableField(defaultValue = "{TODAY}")
+        private java.time.LocalDate todayDate;
     }
 
     @Table(DATE_TIME_DEFAULT_TABLE)

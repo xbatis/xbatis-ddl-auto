@@ -116,6 +116,18 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
+    void oracleShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "biz_date DATE DEFAULT TRUNC(SYSDATE)",
+                    "today_date DATE DEFAULT TRUNC(SYSDATE)"
+            );
+        }
+    }
+
+    @Test
     void oracleShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

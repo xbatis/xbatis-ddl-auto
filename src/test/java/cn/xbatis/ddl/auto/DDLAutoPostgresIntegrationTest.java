@@ -116,6 +116,18 @@ class DDLAutoPostgresIntegrationTest {
     }
 
     @Test
+    void postgresShouldCreateDateDefaultValueColumns() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertDateDefaultValueFlow(
+                    DbType.PGSQL,
+                    connection,
+                    "biz_date DATE DEFAULT CURRENT_DATE",
+                    "today_date DATE DEFAULT CURRENT_DATE"
+            );
+        }
+    }
+
+    @Test
     void postgresShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(
