@@ -140,8 +140,6 @@ class DDLAutoCoverageTest {
             assertEquals(2, creator.getExecutedSqlList().size());
             assertTrue(exception.getMessage().contains("Failed to execute DDL SQL"));
             assertTrue(exception.getMessage().contains("CREATE TABLE auto_listener_user"));
-            assertTrue(exception.getMessage().contains("executed SQL before failure"));
-            assertFalse(exception.getMessage().contains(";; executed SQL before failure"));
         }
     }
 

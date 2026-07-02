@@ -56,6 +56,13 @@ class ColumnDefinitionValue implements ColumnDefinition {
         if (tableFieldDefaultValue.isEmpty()) {
             return resolvedDefinition;
         }
+        if (tableFieldInfo.getFieldInfo().getTypeClass() == Boolean.class) {
+            if ("0".equals(tableFieldDefaultValue)) {
+                tableFieldDefaultValue = "FALSE";
+            } else if ("1".equals(tableFieldDefaultValue)) {
+                tableFieldDefaultValue = "TRUE";
+            }
+        }
         return new ColumnDefinitionValue(resolvedDefinition, tableFieldDefaultValue);
     }
 

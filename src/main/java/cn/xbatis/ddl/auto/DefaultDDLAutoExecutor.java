@@ -1500,7 +1500,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     protected SQLException enrichSqlException(String sql, SQLException exception) {
         String separator = sql.endsWith(";") ? " " : "; ";
         return new SQLException(
-                "Failed to execute DDL SQL: " + sql + separator + "executed SQL before failure: " + executedSqlList,
+                "Failed to execute DDL SQL: " + sql + separator,
                 exception.getSQLState(),
                 exception.getErrorCode(),
                 exception
