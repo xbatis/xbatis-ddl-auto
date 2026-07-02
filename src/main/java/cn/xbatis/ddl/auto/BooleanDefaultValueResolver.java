@@ -41,7 +41,7 @@ final class BooleanDefaultValueResolver {
     }
 
     private static boolean usesNumericBooleanDefault(IDbType dbType) {
-        return isMysql(dbType) || isOracle(dbType) || dbType == DbType.SQL_SERVER;
+        return dbType == DbType.SQL_SERVER;
     }
 
     private static boolean isMysql(IDbType dbType) {

@@ -114,9 +114,9 @@ class DDLAutoMysqlIntegrationTest {
             DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(
                     DbType.MYSQL,
                     connection,
-                    "TINYINT(1)",
-                    "0",
-                    "1"
+                    "BOOLEAN",
+                    "FALSE",
+                    "TRUE"
             );
         }
     }
