@@ -9,7 +9,7 @@
     </parent>
     <groupId>cn.xbatis</groupId>
     <artifactId>xbatis-ddl-auto</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <url>https://gitee.com/xbatis/xbatis-ddl-auto</url>
     <name>
         xbatis DDL自动工具
