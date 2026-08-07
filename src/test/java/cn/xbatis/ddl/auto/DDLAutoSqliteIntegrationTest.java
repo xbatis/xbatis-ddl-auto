@@ -33,6 +33,8 @@ class DDLAutoSqliteIntegrationTest {
 
     private static final String TEST_TABLE = "auto_sqlite_integration_user";
 
+    private static final String UNIQUE_AUTO_INDEX_TABLE = "auto_sqlite_unique_autoindex_user";
+
     @Test
     void sqliteShouldCreateTableAddColumnAndCreateMissingIndexes() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
@@ -161,6 +163,46 @@ class DDLAutoSqliteIntegrationTest {
         }
     }
 
+    @Test
+    void sqliteShouldSyncAndDeleteMissingColumnsAndIndexes() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncFlow(
+                    DbType.SQLITE,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class,
+                    "auto_sync_user",
+                    "DROP INDEX idx_sync_legacy_code;",
+                    "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
+                    "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128);",
+                    "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
+            );
+        }
+    }
+
+    @Test
+    void sqliteShouldIgnoreInternalAutoIndexesDuringSync() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLTestPrinter.ddl(DbType.SQLITE)
+                    .builder(new DefaultDDLBuilder())
+                    .add(SqliteUniqueAutoIndexUser.class)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, UNIQUE_AUTO_INDEX_TABLE));
+            assertTrue(hasSqliteAutoIndex(connection, UNIQUE_AUTO_INDEX_TABLE));
+
+            List<String> syncExecutedSqlList = new java.util.ArrayList<>();
+            DDLTestPrinter.ddl(DbType.SQLITE, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(SqliteUniqueAutoIndexUser.class)
+                    .execute(connection);
+
+            assertTrue(syncExecutedSqlList.isEmpty(),
+                    "Expected no SQLite DDL after sync already executed: " + syncExecutedSqlList);
+        }
+    }
+
     private static boolean tableExists(Connection connection, String tableName) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")) {
             statement.setString(1, tableName);
@@ -203,6 +245,19 @@ class DDLAutoSqliteIntegrationTest {
              ResultSet resultSet = statement.executeQuery("PRAGMA index_list(" + quoteIdentifier(tableName) + ")")) {
             while (resultSet.next()) {
                 if (indexName.equalsIgnoreCase(resultSet.getString("name"))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    private static boolean hasSqliteAutoIndex(Connection connection, String tableName) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("PRAGMA index_list(" + quoteIdentifier(tableName) + ")")) {
+            while (resultSet.next()) {
+                String indexName = resultSet.getString("name");
+                if (indexName != null && indexName.toLowerCase(Locale.ROOT).startsWith("sqlite_autoindex_")) {
                     return true;
                 }
             }
@@ -261,6 +316,16 @@ class DDLAutoSqliteIntegrationTest {
 
         @ColumnDefinition(length = 128, unique = true)
         private String email;
+    }
+
+    @Table(UNIQUE_AUTO_INDEX_TABLE)
+    static class SqliteUniqueAutoIndexUser {
+
+        @TableId
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false, unique = true)
+        private String username;
     }
 
     @Table("auto_sqlite_table_definition_user")

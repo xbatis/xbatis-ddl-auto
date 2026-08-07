@@ -9,7 +9,7 @@ import java.sql.SQLException;
 import java.util.*;
 
 /**
- * 自动建表的门面类，提供接近 JPA hbm2ddl.auto=create/update 的使用体验。
+ * 自动建表的门面类，提供接近 JPA hbm2ddl.auto=create/update/sync 的使用体验。
  * <p>
  * 使用者只需要指定数据库类型、注册 xbatis 实体类，然后选择生成 SQL 或直接执行建表。
  */
@@ -135,7 +135,7 @@ public class DDLAuto {
     /**
      * 从数据源获取连接，按当前数据库状态生成将要执行的 DDL SQL，不执行。
      * <p>
-     * CREATE 模式下只返回缺失表的 CREATE TABLE；UPDATE 模式下还会返回缺失字段的 ADD COLUMN。
+     * CREATE 模式下只返回缺失表的 CREATE TABLE；UPDATE 模式下还会返回缺失字段的 ADD COLUMN；SYNC 模式下还会返回缺失索引和删除多余列/索引的 SQL。
      *
      * @param dataSource 数据源
      * @return 将要执行的 DDL SQL 列表
@@ -154,7 +154,7 @@ public class DDLAuto {
     /**
      * 使用已有连接，按当前数据库状态生成将要执行的 DDL SQL，不执行。
      * <p>
-     * CREATE 模式下只返回缺失表的 CREATE TABLE；UPDATE 模式下还会返回缺失字段的 ADD COLUMN。
+     * CREATE 模式下只返回缺失表的 CREATE TABLE；UPDATE 模式下还会返回缺失字段的 ADD COLUMN；SYNC 模式下还会返回缺失索引和删除多余列/索引的 SQL。
      *
      * @param connection 数据库连接
      * @return 将要执行的 DDL SQL 列表

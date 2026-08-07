@@ -102,6 +102,66 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         }
     }
 
+    static void assertSyncFlow(DatabaseCase databaseCase,
+                               Class<?> v1Entity,
+                               Class<?> v2Entity,
+                               String tableName,
+                               String expectedDropIndexSql,
+                               String expectedDropColumnSql,
+                               String expectedAddColumnSql,
+                               String expectedAddIndexSql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncFlow(databaseCase.dbType, connection, v1Entity, v2Entity, tableName,
+                    expectedDropIndexSql, expectedDropColumnSql, expectedAddColumnSql, expectedAddIndexSql);
+        }
+    }
+
+    static void assertSyncFlow(IDbType dbType,
+                               Connection connection,
+                               Class<?> v1Entity,
+                               Class<?> v2Entity,
+                               String tableName,
+                               String expectedDropIndexSql,
+                               String expectedDropColumnSql,
+                               String expectedAddColumnSql,
+                               String expectedAddIndexSql) throws Exception {
+        dropTestTable(connection, tableName);
+        try {
+            List<String> createExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, createExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .add(v1Entity)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, tableName));
+            assertTrue(columnExists(connection, tableName, "id"));
+            assertTrue(columnExists(connection, tableName, "username"));
+            assertTrue(columnExists(connection, tableName, "legacy_code"));
+            assertTrue(indexExists(connection, tableName, "idx_sync_username"));
+            assertTrue(indexExists(connection, tableName, "idx_sync_legacy_code"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+
+            assertEquals(Arrays.asList(expectedDropIndexSql, expectedDropColumnSql, expectedAddColumnSql, expectedAddIndexSql),
+                    syncExecutedSqlList);
+            assertTrue(columnExists(connection, tableName, "id"));
+            assertTrue(columnExists(connection, tableName, "username"));
+            assertTrue(columnExists(connection, tableName, "email"));
+            assertFalse(columnExists(connection, tableName, "legacy_code"));
+            assertTrue(indexExists(connection, tableName, "idx_sync_username"));
+            assertTrue(indexExists(connection, tableName, "idx_sync_email"));
+            assertFalse(indexExists(connection, tableName, "idx_sync_legacy_code"));
+            assertTrue(primaryKeyExists(connection, tableName, "id"));
+        } finally {
+            dropTestTable(connection, tableName);
+        }
+    }
+
     static void assertMultiTableIndexFlow(DatabaseCase databaseCase) throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
             assertMultiTableIndexFlow(databaseCase.dbType, connection);
@@ -718,6 +778,22 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         return false;
     }
 
+    static boolean primaryKeyExists(Connection connection, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metadata = connection.getMetaData();
+        for (MetadataScope scope : metadataScopes(connection)) {
+            for (String tableCandidate : nameCandidates(tableName)) {
+                try (ResultSet resultSet = metadata.getPrimaryKeys(scope.catalog, scope.schema, tableCandidate)) {
+                    while (resultSet.next()) {
+                        if (matchesName(resultSet.getString("COLUMN_NAME"), columnName)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean indexExists(Connection connection, String tableName, String indexName) throws SQLException {
         DatabaseMetaData metadata = connection.getMetaData();
         for (MetadataScope scope : metadataScopes(connection)) {
@@ -1031,6 +1107,40 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                 sql = "select next value for auto_multi_table_seq")
         @TableId(dbType = DbType.Name.DB2, value = IdAutoType.SQL,
                 sql = "select next value for auto_multi_table_seq from sysibm.sysdummy1")
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false)
+        private String username;
+
+        @ColumnDefinition(length = 128)
+        private String email;
+    }
+
+    @Table("auto_sync_user")
+    @Indexs({
+            @Index(name = "idx_sync_username", fields = @IndexField(name = "username")),
+            @Index(name = "idx_sync_legacy_code", fields = @IndexField(name = "legacyCode"))
+    })
+    static class SyncUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false)
+        private String username;
+
+        @ColumnDefinition(length = 32)
+        private String legacyCode;
+    }
+
+    @Table("auto_sync_user")
+    @Indexs({
+            @Index(name = "idx_sync_username", fields = @IndexField(name = "username")),
+            @Index(name = "idx_sync_email", fields = @IndexField(name = "email"))
+    })
+    static class SyncUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
         private Long id;
 
         @ColumnDefinition(length = 64, nullable = false)

@@ -5,6 +5,7 @@ import db.sql.api.IDbType;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
@@ -91,6 +92,30 @@ public interface DDLBuilder {
     default List<String> addColumnSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> columns, String tableName) {
         Objects.requireNonNull(tableName, "tableName");
         return addColumnSqlList(dbType, tableInfo, columns);
+    }
+
+    /**
+     * 为指定物理表批量生成删除字段 SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columnNames 需要删除的列名集合
+     * @return 删除字段 SQL 列表
+     */
+    List<String> dropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames);
+
+    /**
+     * 为指定物理表批量生成删除字段 SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columnNames 需要删除的列名集合
+     * @param tableName   物理表名
+     * @return 删除字段 SQL 列表
+     */
+    default List<String> dropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames, String tableName) {
+        Objects.requireNonNull(tableName, "tableName");
+        return dropColumnSqlList(dbType, tableInfo, columnNames);
     }
 
     /**
@@ -183,6 +208,30 @@ public interface DDLBuilder {
     default List<String> createIndexSqlList(IDbType dbType, TableInfo tableInfo, List<IndexInfo> indexes, String tableName) {
         Objects.requireNonNull(tableName, "tableName");
         return createIndexSqlList(dbType, tableInfo, resolveIndexes(dbType, tableInfo, indexes, tableName));
+    }
+
+    /**
+     * 为指定物理表批量生成删除索引 SQL 列表。
+     *
+     * @param dbType     数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param indexNames  需要删除的索引名集合
+     * @return 删除索引 SQL 列表
+     */
+    List<String> dropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames);
+
+    /**
+     * 为指定物理表批量生成删除索引 SQL 列表。
+     *
+     * @param dbType     数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param indexNames  需要删除的索引名集合
+     * @param tableName   物理表名
+     * @return 删除索引 SQL 列表
+     */
+    default List<String> dropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames, String tableName) {
+        Objects.requireNonNull(tableName, "tableName");
+        return dropIndexSqlList(dbType, tableInfo, indexNames);
     }
 
     /**

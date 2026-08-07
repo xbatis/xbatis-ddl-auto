@@ -2,13 +2,14 @@
 
 xbatis-ddl-auto 是一个基于 xbatis 实体元数据的轻量自动建表工具。
 
-它复用 xbatis 的 `@Table`、`@TableId`、`@TableField`、`@ColumnDefinition` 等注解解析结果，根据实体类生成并执行数据库 DDL，提供接近 JPA `ddl-auto=create/update` 的使用体验，但不引入 JPA 或 Hibernate。
+它复用 xbatis 的 `@Table`、`@TableId`、`@TableField`、`@ColumnDefinition` 等注解解析结果，根据实体类生成并执行数据库 DDL，提供接近 JPA `ddl-auto=create/update/sync` 的使用体验，但不引入 JPA 或 Hibernate。
 
 ## 功能
 
 - 根据 xbatis 实体生成 `CREATE TABLE` SQL
 - 表不存在时自动建表
 - 表存在时可在 `UPDATE` 模式下自动追加新增字段
+- 表存在时可在 `SYNC` 模式下自动删除多余字段和索引，并补齐缺失字段和索引
 - 支持只生成 SQL，不执行数据库操作
 - 通过 JDBC `DatabaseMetaData` 判断表、字段和索引是否存在
 - 支持常见 Java 类型到数据库列类型映射
@@ -17,7 +18,7 @@ xbatis-ddl-auto 是一个基于 xbatis 实体元数据的轻量自动建表工�
 
 ## 安全边界
 
-`UPDATE` 模式只会自动新增字段和缺失索引，不会自动执行以下高风险操作：
+`UPDATE` 模式只会自动新增字段和缺失索引；`SYNC` 模式会额外删除多余字段和索引，但仍不会自动执行以下高风险操作：
 
 - 删除数据库已有字段
 - 修改字段类型
@@ -128,6 +129,27 @@ DDLAuto.of(DbType.MYSQL)
 
 重复执行 `UPDATE` 模式不会重复添加已存在字段或已存在索引。
 
+## SYNC 模式
+
+`SYNC` 模式用于把表结构同步到实体定义：
+
+```java
+import cn.xbatis.ddl.auto.Mode;
+
+DDLAuto.of(DbType.MYSQL)
+    .mode(Mode.SYNC)
+    .add(SysUser.class)
+    .execute(dataSource);
+```
+
+行为：
+
+- 表不存在：执行 `CREATE TABLE`
+- 表已存在：删除数据库中多余的列和索引
+- 表已存在：补齐实体中缺失的列和索引
+
+`SYNC` 不会修改字段类型、字段长度、可空性、默认值或重命名字段。
+
 ## 只生成 SQL / 预览 SQL
 
 不连接数据库，只生成建表 SQL：
@@ -152,6 +174,7 @@ List<String> sqlList = DDLAuto.of(DbType.MYSQL)
 - 表不存在：返回 `CREATE TABLE` 及附属 DDL
 - 表已存在且是 `CREATE` 模式：返回空列表
 - 表已存在且是 `UPDATE` 模式：只返回缺失字段的 `ALTER TABLE ... ADD COLUMN ...` 及附属 DDL，以及缺失索引的 `CREATE INDEX`
+- 表已存在且是 `SYNC` 模式：返回缺失字段的 `ALTER TABLE ... ADD COLUMN ...`、缺失索引的 `CREATE INDEX`，以及多余字段/索引的删除 DDL
 
 也可以使用底层构建器生成单个字段的新增列 SQL：
 

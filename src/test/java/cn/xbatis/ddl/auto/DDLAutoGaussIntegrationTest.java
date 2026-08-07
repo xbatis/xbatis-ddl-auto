@@ -133,6 +133,23 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
         }
     }
 
+    @Test
+    void gaussShouldSyncAndDeleteMissingColumnsAndIndexes() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncFlow(
+                    DbType.GAUSS,
+                    connection,
+                    SyncUserV1.class,
+                    SyncUserV2.class,
+                    "auto_sync_user",
+                    "DROP INDEX idx_sync_legacy_code;",
+                    "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
+                    "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128);",
+                    "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             Class.forName(GAUSS_DRIVER);

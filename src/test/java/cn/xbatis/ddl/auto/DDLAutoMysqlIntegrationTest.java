@@ -180,6 +180,23 @@ class DDLAutoMysqlIntegrationTest {
         }
     }
 
+    @Test
+    void mysqlShouldSyncAndDeleteMissingColumnsAndIndexes() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncFlow(
+                    DbType.MYSQL,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class,
+                    "auto_sync_user",
+                    "DROP INDEX idx_sync_legacy_code ON auto_sync_user;",
+                    "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
+                    "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128);",
+                    "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             return DriverManager.getConnection(databaseUrl(), MYSQL_USERNAME, MYSQL_PASSWORD);

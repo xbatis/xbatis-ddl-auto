@@ -258,6 +258,23 @@ class DDLAutoDb2IntegrationTest {
         }
     }
 
+    @Test
+    void db2ShouldSyncAndDeleteMissingColumnsAndIndexes() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncFlow(
+                    DbType.DB2,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class,
+                    "auto_sync_user",
+                    "DROP INDEX idx_sync_legacy_code;",
+                    "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
+                    "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128);",
+                    "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
+            );
+        }
+    }
+
     @Table("auto_db2_sequence_user")
     static class Db2SequenceUser {
 

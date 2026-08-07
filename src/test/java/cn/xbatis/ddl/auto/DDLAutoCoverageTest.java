@@ -394,6 +394,16 @@ class DDLAutoCoverageTest {
             }
 
             @Override
+            public List<String> dropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames) {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public List<String> dropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames) {
+                return Collections.emptyList();
+            }
+
+            @Override
             public List<ColumnInfo> getColumns(IDbType dbType, Class<?> entityClass) {
                 return Collections.emptyList();
             }
@@ -698,6 +708,21 @@ class DDLAutoCoverageTest {
                     .sqlList(connection)
                     .isEmpty());
         }
+    }
+
+    @Test
+    void dropSqlShouldCoverDialectVariants() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+        TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class);
+
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_user DROP COLUMN legacy_code;"),
+                builder.dropColumnSqlList(DbType.H2, tableInfo, Collections.singletonList("legacy_code")));
+        assertEquals(Collections.singletonList("DROP INDEX idx_sync_legacy_code;"),
+                builder.dropIndexSqlList(DbType.PGSQL, tableInfo, Collections.singletonList("idx_sync_legacy_code")));
+        assertEquals(Collections.singletonList("DROP INDEX idx_sync_legacy_code ON auto_sync_user;"),
+                builder.dropIndexSqlList(DbType.MYSQL, tableInfo, Collections.singletonList("idx_sync_legacy_code")));
+        assertEquals(Collections.singletonList("DROP INDEX idx_sync_legacy_code ON auto_sync_user;"),
+                builder.dropIndexSqlList(DbType.SQL_SERVER, tableInfo, Collections.singletonList("idx_sync_legacy_code")));
     }
 
     @Test

@@ -128,6 +128,16 @@ public class DefaultDDLBuilder implements DDLBuilder {
     }
 
     @Override
+    public List<String> dropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames) {
+        return buildDropColumnSqlList(dbType, tableInfo, columnNames);
+    }
+
+    @Override
+    public List<String> dropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames, String tableName) {
+        return buildDropColumnSqlList(dbType, tableInfo, columnNames, tableName);
+    }
+
+    @Override
     public String createTableSql(IDbType dbType, Class<?> entityClass) {
         return buildCreateTableSql(dbType, entityClass);
     }
@@ -188,6 +198,16 @@ public class DefaultDDLBuilder implements DDLBuilder {
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(tableName, "tableName");
         return buildCreateTableSqlList(dbType, metadata, tableName);
+    }
+
+    @Override
+    public List<String> dropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames) {
+        return buildDropIndexSqlList(dbType, tableInfo, indexNames);
+    }
+
+    @Override
+    public List<String> dropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames, String tableName) {
+        return buildDropIndexSqlList(dbType, tableInfo, indexNames, tableName);
     }
 
     /**
@@ -351,6 +371,37 @@ public class DefaultDDLBuilder implements DDLBuilder {
     }
 
     /**
+     * 根据已解析的实体上下文生成 DROP COLUMN SQL。
+     */
+    protected String buildDropColumnSql(DDLContext context, String columnName) {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("ALTER TABLE ");
+        appendTableName(ddl, context);
+        ddl.append(" DROP COLUMN ");
+        ddl.append(context.dbType.wrap(columnName));
+        ddl.append(";");
+        return ddl.toString();
+    }
+
+    /**
+     * 根据已解析的实体上下文生成 DROP INDEX SQL。
+     */
+    protected String buildDropIndexSql(DDLContext context, String indexName) {
+        StringBuilder ddl = new StringBuilder();
+        if (supportsDropIndexWithTableName(context.dbType)) {
+            ddl.append("DROP INDEX ");
+            ddl.append(context.dbType.wrap(indexName));
+            ddl.append(" ON ");
+            appendTableName(ddl, context);
+        } else {
+            ddl.append("DROP INDEX ");
+            ddl.append(context.dbType.wrap(indexName));
+        }
+        ddl.append(";");
+        return ddl.toString();
+    }
+
+    /**
      * 根据实体字段生成新增列 SQL 列表。
      *
      * @param dbType      数据库类型
@@ -426,6 +477,93 @@ public class DefaultDDLBuilder implements DDLBuilder {
         sqlList.add(buildAddColumnsSql(context));
         for (ColumnInfo column : context.columns) {
             appendAddColumnSupplementSqlList(context, column, sqlList);
+        }
+        return sqlList;
+    }
+
+    /**
+     * 根据指定物理表批量生成 DROP COLUMN SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columnNames 需要删除的列名集合
+     * @return DROP COLUMN 语句列表
+     */
+    public List<String> buildDropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames) {
+        return buildDropColumnSqlList(dbType, tableInfo, columnNames, tableInfo.getTableName());
+    }
+
+    /**
+     * 根据指定物理表批量生成 DROP COLUMN SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columnNames 需要删除的列名集合
+     * @param tableName   物理表名
+     * @return DROP COLUMN 语句列表
+     */
+    public List<String> buildDropColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> columnNames, String tableName) {
+        Objects.requireNonNull(dbType, "dbType");
+        Objects.requireNonNull(tableInfo, "tableInfo");
+        Objects.requireNonNull(columnNames, "columnNames");
+        Objects.requireNonNull(tableName, "tableName");
+
+        if (!DDLTableNameResolverUtil.isTable(tableInfo) || columnNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        DDLContext context = createContext(dbType, tableInfo, Collections.<ColumnInfo>emptyList(), tableName);
+        List<String> sqlList = new ArrayList<>(columnNames.size());
+        for (String columnName : columnNames) {
+            if (isBlank(columnName)) {
+                throw new IllegalArgumentException("columnNames contains blank column name");
+            }
+            sqlList.add(buildDropColumnSql(context, columnName));
+        }
+        return sqlList;
+    }
+
+    /**
+     * 根据指定物理表批量生成 DROP INDEX SQL 列表。
+     *
+     * @param dbType     数据库类型
+     * @param tableInfo  xbatis 表元数据
+     * @param indexNames 需要删除的索引名集合
+     * @return DROP INDEX 语句列表
+     */
+    public List<String> buildDropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames) {
+        return buildDropIndexSqlList(dbType, tableInfo, indexNames, tableInfo.getTableName());
+    }
+
+    /**
+     * 根据指定物理表批量生成 DROP INDEX SQL 列表。
+     *
+     * @param dbType     数据库类型
+     * @param tableInfo  xbatis 表元数据
+     * @param indexNames 需要删除的索引名集合
+     * @param tableName  物理表名
+     * @return DROP INDEX 语句列表
+     */
+    public List<String> buildDropIndexSqlList(IDbType dbType, TableInfo tableInfo, Collection<String> indexNames, String tableName) {
+        Objects.requireNonNull(dbType, "dbType");
+        Objects.requireNonNull(tableInfo, "tableInfo");
+        Objects.requireNonNull(indexNames, "indexNames");
+        Objects.requireNonNull(tableName, "tableName");
+
+        if (!DDLTableNameResolverUtil.isTable(tableInfo) || indexNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (!supportsDropIndex(dbType)) {
+            throw new UnsupportedOperationException(dbType.getName() + " does not support DROP INDEX");
+        }
+
+        DDLContext context = createContext(dbType, tableInfo, Collections.<ColumnInfo>emptyList(), tableName);
+        List<String> sqlList = new ArrayList<>(indexNames.size());
+        for (String indexName : indexNames) {
+            if (isBlank(indexName)) {
+                throw new IllegalArgumentException("indexNames contains blank index name");
+            }
+            sqlList.add(buildDropIndexSql(context, indexName));
         }
         return sqlList;
     }
@@ -1727,6 +1865,20 @@ public class DefaultDDLBuilder implements DDLBuilder {
      */
     protected boolean supportsCreateIndex(IDbType dbType) {
         return dialect.supportsCreateIndex(dbType);
+    }
+
+    /**
+     * 判断数据库是否支持传统 DROP INDEX 语法。
+     */
+    protected boolean supportsDropIndex(IDbType dbType) {
+        return dbType != DbType.CLICK_HOUSE;
+    }
+
+    /**
+     * 判断 DROP INDEX 是否需要带上表名。
+     */
+    protected boolean supportsDropIndexWithTableName(IDbType dbType) {
+        return dialect.isMysql(dbType) || isSqlServer(dbType);
     }
 
     /**

@@ -99,6 +99,20 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
         assertMultiTableSequenceAndIndexFlow(DATABASE);
     }
 
+    @Test
+    void dmShouldSyncAndDeleteMissingColumnsAndIndexes() throws Exception {
+        assertSyncFlow(
+                DATABASE,
+                SyncUserV1.class,
+                SyncUserV2.class,
+                "auto_sync_user",
+                "DROP INDEX idx_sync_legacy_code;",
+                "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
+                "ALTER TABLE auto_sync_user ADD email VARCHAR2(128);",
+                "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
+        );
+    }
+
     @Table("auto_dm_itg_user")
     @Index(name = "idx_dm_itg_user_name", fields = @IndexField(name = "username"))
     static class DmIntegrationUserV1 {

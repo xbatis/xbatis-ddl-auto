@@ -26,6 +26,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
     private static final String SEQUENCE_TYPE = "SEQUENCE";
 
+    private static final String SQLITE_AUTO_INDEX_PREFIX = "sqlite_autoindex_";
+
     private static final String[] TABLE_TYPES = new String[]{TABLE_TYPE};
 
     private static final String[] TABLE_AND_VIEW_TYPES = new String[]{TABLE_TYPE, VIEW_TYPE};
@@ -114,7 +116,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (entityMetadataList.isEmpty()) {
             return Collections.emptyList();
         }
-        DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList, mode == Mode.UPDATE);
+        boolean includeColumns = mode == Mode.UPDATE || mode == Mode.SYNC;
+        boolean includeIndexes = mode == Mode.SYNC || shouldReadIndexesForEntities(dbType, entityMetadataList);
+        DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList,
+                includeColumns, includeIndexes, mode == Mode.SYNC);
         List<String> sqlList = new ArrayList<>();
         for (EntityDDLMetadata entityMetadata : entityMetadataList) {
             sqlList.addAll(createSqlList(dbType, mode, entityMetadata, databaseMetadata));
@@ -241,7 +246,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             LOGGER.info("Starting DDL execution, dbType={}, mode={}, tableCount={}", dbType.getName(), mode, entityMetadataList.size());
         }
         try {
-            DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList, mode == Mode.UPDATE);
+            boolean includeColumns = mode == Mode.UPDATE || mode == Mode.SYNC;
+            boolean includeIndexes = mode == Mode.SYNC || shouldReadIndexesForEntities(dbType, entityMetadataList);
+            DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList,
+                    includeColumns, includeIndexes, mode == Mode.SYNC);
             try (Statement statement = connection.createStatement()) {
                 for (EntityDDLMetadata entityMetadata : entityMetadataList) {
                     executeSql(dbType, statement, createSqlList(dbType, mode, entityMetadata, databaseMetadata));
@@ -351,8 +359,11 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return Collections.emptyList();
         }
         EntityDDLMetadata entityMetadata = entityMetadata(dbType, tableInfo);
+        boolean includeColumns = mode == Mode.UPDATE || mode == Mode.SYNC;
+        boolean includeIndexes = mode == Mode.SYNC || shouldReadIndexesForEntities(dbType, Collections.singletonList(entityMetadata));
         return createSqlList(dbType, mode, entityMetadata,
-                loadDatabaseMetadataForEntities(dbType, connection, Collections.singletonList(entityMetadata), mode == Mode.UPDATE));
+                loadDatabaseMetadataForEntities(dbType, connection, Collections.singletonList(entityMetadata),
+                        includeColumns, includeIndexes, mode == Mode.SYNC));
     }
 
     /**
@@ -385,15 +396,19 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 removeSequenceSqlList(dbType, entityMetadata, createTableSqlList);
                 sqlList.addAll(createTableSqlList);
                 databaseMetadata.addTable(tableInfo, tableName);
-                if (mode == Mode.UPDATE) {
+                if (mode == Mode.UPDATE || mode == Mode.SYNC) {
                     databaseMetadata.addColumns(tableInfo, tableName, entityMetadata.getColumns());
                     databaseMetadata.addIndexes(tableInfo, tableName,
                             ddlBuilder.resolveIndexes(dbType, tableInfo, entityMetadata.getIndexes(), tableName));
                 }
                 continue;
             }
-            if (mode == Mode.UPDATE) {
+            if (mode == Mode.UPDATE || mode == Mode.SYNC) {
                 sqlList.addAll(createAddSequenceSqlList(dbType, entityMetadata, databaseMetadata));
+                if (mode == Mode.SYNC) {
+                    sqlList.addAll(createDropIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                    sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                }
                 sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                 sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
             }
@@ -419,6 +434,14 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
+     * 按实体 schema 分组加载当前连接可见的表、列和索引元数据，供批量实体复用。
+     */
+    protected DatabaseMetadata loadDatabaseMetadataForEntities(IDbType dbType, Connection connection, Collection<EntityDDLMetadata> entityMetadataList, boolean includeColumns) throws SQLException {
+        return loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList, includeColumns,
+                shouldReadIndexesForEntities(dbType, entityMetadataList), false);
+    }
+
+    /**
      * 兼容未传数据库类型的 protected API，不解析实体 DDL 元数据。
      */
     protected DatabaseMetadata loadDatabaseMetadataWithoutEntityMetadata(Connection connection, Collection<TableInfo> tableInfos, boolean includeColumns) throws SQLException {
@@ -439,7 +462,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     /**
      * 按实体 schema 分组加载当前连接可见的表和列元数据，供批量实体复用。
      */
-    protected DatabaseMetadata loadDatabaseMetadataForEntities(IDbType dbType, Connection connection, Collection<EntityDDLMetadata> entityMetadataList, boolean includeColumns) throws SQLException {
+    protected DatabaseMetadata loadDatabaseMetadataForEntities(IDbType dbType, Connection connection, Collection<EntityDDLMetadata> entityMetadataList,
+                                                               boolean includeColumns, boolean includeIndexes, boolean includePrimaryKeys) throws SQLException {
         List<TableInfo> tableInfos = tableInfosFromEntityMetadata(entityMetadataList);
         DatabaseMetadata databaseMetadata = new DatabaseMetadata(connection.getCatalog(), getSchema(connection));
         DatabaseMetaData metaData = connection.getMetaData();
@@ -450,9 +474,12 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         if (includeColumns) {
             readColumns(metaData, databaseMetadata, tableInfos);
-            if (shouldReadIndexesForEntities(dbType, entityMetadataList)) {
+            if (includeIndexes) {
                 readIndexes(metaData, databaseMetadata, tableInfos);
             }
+        }
+        if (includePrimaryKeys) {
+            readPrimaryKeys(metaData, databaseMetadata, tableInfos);
         }
         return databaseMetadata;
     }
@@ -1066,9 +1093,76 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                             getString(resultSet, "TABLE_CAT"),
                             getString(resultSet, "TABLE_SCHEM"),
                             getString(resultSet, "TABLE_NAME"),
-                            indexName
+                            indexName,
+                            resultSet.getBoolean("NON_UNIQUE"),
+                            getString(resultSet, "COLUMN_NAME")
                     );
                 }
+            }
+        }
+    }
+
+    /**
+     * 按实体表名读取主键元数据。
+     */
+    protected void readPrimaryKeys(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata, Collection<TableInfo> tableInfos) throws SQLException {
+        Set<String> readKeys = new LinkedHashSet<>();
+        boolean schemaAsCatalogFallback = supportsSchemaAsCatalogFallback(metaData);
+        for (TableInfo tableInfo : tableInfos) {
+            for (String tableName : resolveTableNames(tableInfo)) {
+                if (databaseMetadata.objectType(tableInfo, tableName) == OBJECT_TABLE) {
+                    readPrimaryKeys(metaData, databaseMetadata, tableInfo, tableName, readKeys, schemaAsCatalogFallback);
+                }
+            }
+        }
+    }
+
+    /**
+     * 读取单个实体表的主键元数据。
+     */
+    protected void readPrimaryKeys(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata, TableInfo tableInfo, String tableName,
+                                   Set<String> readKeys, boolean schemaAsCatalogFallback) throws SQLException {
+        String schema = resolveSchema(tableInfo.getSchema(), databaseMetadata.defaultSchema);
+        Set<String> schemaCandidates = candidates(schema);
+        if (schema == null) {
+            schemaCandidates.add(null);
+        }
+        Set<String> tableCandidates = candidates(tableName);
+        for (String schemaCandidate : schemaCandidates) {
+            for (String tableCandidate : tableCandidates) {
+                readPrimaryKeyMetadataIfNecessary(metaData, databaseMetadata.catalog, schemaCandidate, tableCandidate, databaseMetadata, readKeys);
+                if (schemaCandidate != null && schemaAsCatalogFallback) {
+                    readPrimaryKeyMetadataIfNecessary(metaData, schemaCandidate, null, tableCandidate, databaseMetadata, readKeys);
+                }
+            }
+        }
+    }
+
+    /**
+     * 去重后读取主键元数据。
+     */
+    protected void readPrimaryKeyMetadataIfNecessary(DatabaseMetaData metaData, String catalog, String schema, String tableName,
+                                                     DatabaseMetadata databaseMetadata, Set<String> readKeys) throws SQLException {
+        String readKey = metadataReadKey(catalog, schema, tableName);
+        if (readKeys.add(readKey)) {
+            readPrimaryKeyMetadata(metaData, catalog, schema, tableName, databaseMetadata);
+        }
+    }
+
+    /**
+     * 从 JDBC 元数据结果集中读取主键。
+     */
+    protected void readPrimaryKeyMetadata(DatabaseMetaData metaData, String catalog, String schema, String tableName,
+                                          DatabaseMetadata databaseMetadata) throws SQLException {
+        try (ResultSet resultSet = metaData.getPrimaryKeys(catalog, schema, tableName)) {
+            while (resultSet.next()) {
+                databaseMetadata.addPrimaryKey(
+                        getString(resultSet, "TABLE_CAT"),
+                        getString(resultSet, "TABLE_SCHEM"),
+                        getString(resultSet, "TABLE_NAME"),
+                        getString(resultSet, "PK_NAME"),
+                        getString(resultSet, "COLUMN_NAME")
+                );
             }
         }
     }
@@ -1282,6 +1376,43 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
+     * 为数据库中多余的实体字段生成 DROP COLUMN SQL。
+     */
+    protected List<String> createDropColumnSqlList(IDbType dbType, TableInfo tableInfo, DatabaseMetadata databaseMetadata) {
+        return createDropColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableInfo.getTableName(), databaseMetadata);
+    }
+
+    /**
+     * 为指定物理表中多余的实体字段生成 DROP COLUMN SQL。
+     */
+    protected List<String> createDropColumnSqlList(IDbType dbType, EntityDDLMetadata entityMetadata, String tableName, DatabaseMetadata databaseMetadata) {
+        TableInfo tableInfo = entityMetadata.getTableInfo();
+        List<ColumnInfo> columns = entityMetadata.getColumns();
+        if (columns.isEmpty() || databaseMetadata == null) {
+            return Collections.emptyList();
+        }
+        MetadataNameIndex entityColumnNameIndex = metadataNameIndex(columnNames(columns));
+        MetadataNameIndex primaryKeyColumnNameIndex = metadataNameIndex(databaseMetadata.getPrimaryKeyColumnNames(tableInfo, tableName));
+        List<String> existingColumnNames = new ArrayList<>(databaseMetadata.getColumnNames(tableInfo, tableName));
+        List<String> missingColumnNames = new ArrayList<>();
+        for (String columnName : existingColumnNames) {
+            if (primaryKeyColumnNameIndex.contains(columnName)) {
+                continue;
+            }
+            if (!entityColumnNameIndex.contains(columnName)) {
+                missingColumnNames.add(columnName);
+            }
+        }
+        if (missingColumnNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+        for (int i = 0; i < missingColumnNames.size(); i++) {
+            missingColumnNames.set(i, normalize(missingColumnNames.get(i)));
+        }
+        return ddlBuilder.dropColumnSqlList(dbType, tableInfo, missingColumnNames, tableName);
+    }
+
+    /**
      * 为数据库中不存在的实体索引生成 CREATE INDEX SQL。
      */
     protected List<String> createAddIndexSqlList(IDbType dbType, TableInfo tableInfo, DatabaseMetadata databaseMetadata) {
@@ -1341,6 +1472,46 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             databaseMetadata.addIndexes(tableInfo, tableName, missingIndexes);
         }
         return sqlList;
+    }
+
+    /**
+     * 为数据库中多余的实体索引生成 DROP INDEX SQL。
+     */
+    protected List<String> createDropIndexSqlList(IDbType dbType, TableInfo tableInfo, DatabaseMetadata databaseMetadata) {
+        return createDropIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableInfo.getTableName(), databaseMetadata);
+    }
+
+    /**
+     * 为指定物理表中多余的实体索引生成 DROP INDEX SQL。
+     */
+    protected List<String> createDropIndexSqlList(IDbType dbType, EntityDDLMetadata entityMetadata, String tableName, DatabaseMetadata databaseMetadata) {
+        TableInfo tableInfo = entityMetadata.getTableInfo();
+        if (databaseMetadata == null) {
+            return Collections.emptyList();
+        }
+        List<IndexInfo> indexes = ddlBuilder.resolveIndexes(dbType, tableInfo, entityMetadata.getIndexes(), tableName);
+        MetadataNameIndex entityIndexNameIndex = metadataNameIndex(indexNames(indexes));
+        MetadataNameIndex primaryKeyIndexNameIndex = metadataNameIndex(databaseMetadata.getPrimaryKeyIndexNames(tableInfo, tableName));
+        List<String> existingIndexNames = new ArrayList<>(databaseMetadata.getIndexNames(tableInfo, tableName));
+        List<String> missingIndexNames = new ArrayList<>();
+        for (String indexName : existingIndexNames) {
+            if (isSqliteAutoIndexName(dbType, indexName)) {
+                continue;
+            }
+            if (primaryKeyIndexNameIndex.contains(indexName)) {
+                continue;
+            }
+            if (!entityIndexNameIndex.contains(indexName)) {
+                missingIndexNames.add(indexName);
+            }
+        }
+        if (missingIndexNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+        for (int i = 0; i < missingIndexNames.size(); i++) {
+            missingIndexNames.set(i, normalize(missingIndexNames.get(i)));
+        }
+        return ddlBuilder.dropIndexSqlList(dbType, tableInfo, missingIndexNames, tableName);
     }
 
     /**
@@ -1533,6 +1704,15 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
+     * SQLite 的系统自动索引不能通过 DROP INDEX 删除，SYNC 时需要跳过。
+     */
+    protected boolean isSqliteAutoIndexName(IDbType dbType, String indexName) {
+        return dbType == DbType.SQLITE
+                && indexName != null
+                && normalize(indexName).startsWith(SQLITE_AUTO_INDEX_PREFIX);
+    }
+
+    /**
      * 判断已读取的元数据名称集合中是否包含目标名称。
      */
     protected boolean containsMetadataName(Collection<String> actualNames, String expectedName) {
@@ -1544,6 +1724,28 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      */
     protected MetadataNameIndex metadataNameIndex(Collection<String> actualNames) {
         return new MetadataNameIndex(actualNames);
+    }
+
+    /**
+     * 提取实体列名集合。
+     */
+    protected List<String> columnNames(Collection<ColumnInfo> columns) {
+        List<String> columnNames = new ArrayList<>(columns.size());
+        for (ColumnInfo column : columns) {
+            columnNames.add(column.getName());
+        }
+        return columnNames;
+    }
+
+    /**
+     * 提取实体索引名集合。
+     */
+    protected List<String> indexNames(Collection<IndexInfo> indexes) {
+        List<String> indexNames = new ArrayList<>(indexes.size());
+        for (IndexInfo index : indexes) {
+            indexNames.add(index.getName());
+        }
+        return indexNames;
     }
 
     /**
@@ -1610,11 +1812,62 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final String indexName;
 
-        IndexMetadata(String catalog, String schema, String tableName, String indexName) {
+        private boolean nonUnique;
+
+        private final List<String> columnNames = new ArrayList<>();
+
+        IndexMetadata(String catalog, String schema, String tableName, String indexName, boolean nonUnique, Collection<String> columnNames) {
             this.catalog = catalog;
             this.schema = schema;
             this.tableName = tableName;
             this.indexName = indexName;
+            this.nonUnique = nonUnique;
+            addColumnNames(columnNames);
+        }
+
+        void addColumnNames(Collection<String> columnNames) {
+            if (columnNames == null) {
+                return;
+            }
+            for (String columnName : columnNames) {
+                if (columnName != null && !columnName.trim().isEmpty()) {
+                    this.columnNames.add(columnName);
+                }
+            }
+        }
+
+        void addColumnName(String columnName) {
+            if (columnName != null && !columnName.trim().isEmpty()) {
+                this.columnNames.add(columnName);
+            }
+        }
+
+        void setNonUnique(boolean nonUnique) {
+            this.nonUnique = this.nonUnique || nonUnique;
+        }
+    }
+
+    /**
+     * 主键元数据行。
+     */
+    protected static class PrimaryKeyMetadata {
+
+        private final String catalog;
+
+        private final String schema;
+
+        private final String tableName;
+
+        private final String primaryKeyName;
+
+        private final String columnName;
+
+        PrimaryKeyMetadata(String catalog, String schema, String tableName, String primaryKeyName, String columnName) {
+            this.catalog = catalog;
+            this.schema = schema;
+            this.tableName = tableName;
+            this.primaryKeyName = primaryKeyName;
+            this.columnName = columnName;
         }
     }
 
@@ -1693,6 +1946,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final Map<String, List<IndexMetadata>> indexesByTableName = new LinkedHashMap<>();
 
+        private final Map<String, List<PrimaryKeyMetadata>> primaryKeysByTableName = new LinkedHashMap<>();
+
         private final Map<String, List<SequenceMetadata>> sequencesByName = new LinkedHashMap<>();
 
         DatabaseMetadata(String catalog) {
@@ -1740,12 +1995,46 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         void addIndexes(TableInfo tableInfo, String tableName, Collection<IndexInfo> addIndexes) {
             for (IndexInfo index : addIndexes) {
-                addIndex(catalog, resolveSchema(tableInfo.getSchema(), defaultSchema), tableName, index.getName());
+                List<String> columnNames = new ArrayList<>(index.getFields().size());
+                for (IndexInfo.Field field : index.getFields()) {
+                    columnNames.add(field.getColumnName());
+                }
+                addIndex(catalog, resolveSchema(tableInfo.getSchema(), defaultSchema), tableName, index.getName(),
+                        !index.isUnique(), columnNames);
             }
         }
 
         void addIndex(String catalog, String schema, String tableName, String indexName) {
-            put(indexesByTableName, metadataLookupKey(tableName), new IndexMetadata(catalog, schema, tableName, indexName));
+            addIndex(catalog, schema, tableName, indexName, false, Collections.emptyList());
+        }
+
+        void addIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique, String columnName) {
+            addIndex(catalog, schema, tableName, indexName, nonUnique,
+                    columnName == null ? Collections.emptyList() : Collections.singletonList(columnName));
+        }
+
+        void addIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique, Collection<String> columnNames) {
+            String key = metadataLookupKey(tableName);
+            List<IndexMetadata> indexes = indexesByTableName.get(key);
+            if (indexes == null) {
+                indexes = new ArrayList<>();
+                indexesByTableName.put(key, indexes);
+            }
+            IndexMetadata indexMetadata = findIndexMetadata(indexes, catalog, schema, tableName, indexName);
+            if (indexMetadata == null) {
+                indexes.add(new IndexMetadata(catalog, schema, tableName, indexName, nonUnique, columnNames));
+                return;
+            }
+            indexMetadata.setNonUnique(nonUnique);
+            indexMetadata.addColumnNames(columnNames);
+        }
+
+        void addPrimaryKey(String catalog, String schema, String tableName, String primaryKeyName, String columnName) {
+            if (isBlank(columnName)) {
+                return;
+            }
+            put(primaryKeysByTableName, metadataLookupKey(tableName),
+                    new PrimaryKeyMetadata(catalog, schema, tableName, primaryKeyName, columnName));
         }
 
         void addSequences(TableInfo tableInfo, Collection<SequenceInfo> addSequences) {
@@ -1830,6 +2119,58 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return indexNames;
         }
 
+        Set<String> getPrimaryKeyColumnNames(TableInfo tableInfo) {
+            return getPrimaryKeyColumnNames(tableInfo, tableInfo.getTableName());
+        }
+
+        Set<String> getPrimaryKeyColumnNames(TableInfo tableInfo, String tableName) {
+            Set<String> columnNames = new LinkedHashSet<>();
+            List<PrimaryKeyMetadata> primaryKeys = primaryKeysByTableName.get(metadataLookupKey(tableName));
+            if (primaryKeys == null) {
+                return columnNames;
+            }
+            for (PrimaryKeyMetadata primaryKey : primaryKeys) {
+                if (matches(tableInfo, tableName, primaryKey.catalog, primaryKey.schema, primaryKey.tableName)) {
+                    columnNames.add(primaryKey.columnName);
+                }
+            }
+            return columnNames;
+        }
+
+        Set<String> getPrimaryKeyIndexNames(TableInfo tableInfo) {
+            return getPrimaryKeyIndexNames(tableInfo, tableInfo.getTableName());
+        }
+
+        Set<String> getPrimaryKeyIndexNames(TableInfo tableInfo, String tableName) {
+            Set<String> indexNames = new LinkedHashSet<>();
+            List<PrimaryKeyMetadata> primaryKeys = primaryKeysByTableName.get(metadataLookupKey(tableName));
+            if (primaryKeys == null) {
+                primaryKeys = Collections.emptyList();
+            }
+            for (PrimaryKeyMetadata primaryKey : primaryKeys) {
+                if (matches(tableInfo, tableName, primaryKey.catalog, primaryKey.schema, primaryKey.tableName)
+                        && !isBlank(primaryKey.primaryKeyName)) {
+                    indexNames.add(primaryKey.primaryKeyName);
+                }
+            }
+            List<String> primaryKeyColumnNames = new ArrayList<>(getPrimaryKeyColumnNames(tableInfo, tableName));
+            if (primaryKeyColumnNames.isEmpty()) {
+                return indexNames;
+            }
+            List<IndexMetadata> indexes = indexesByTableName.get(metadataLookupKey(tableName));
+            if (indexes == null) {
+                return indexNames;
+            }
+            for (IndexMetadata index : indexes) {
+                if (matches(tableInfo, tableName, index.catalog, index.schema, index.tableName)
+                        && !index.nonUnique
+                        && sameMetadataNames(primaryKeyColumnNames, index.columnNames)) {
+                    indexNames.add(index.indexName);
+                }
+            }
+            return indexNames;
+        }
+
         boolean sequenceExists(TableInfo tableInfo, SequenceInfo sequence) {
             List<SequenceMetadata> sequences = sequencesByName.get(metadataLookupKey(sequence.getName()));
             if (sequences == null) {
@@ -1894,6 +2235,28 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 }
             }
             return false;
+        }
+
+        private IndexMetadata findIndexMetadata(List<IndexMetadata> indexes, String catalog, String schema, String tableName, String indexName) {
+            for (IndexMetadata index : indexes) {
+                if (matchesMetadataRow(catalog, schema, tableName, index.catalog, index.schema, index.tableName)
+                        && metadataNameMatcher.matchesMetadataName(indexName, index.indexName)) {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        private boolean sameMetadataNames(List<String> expectedNames, List<String> actualNames) {
+            if (expectedNames.size() != actualNames.size()) {
+                return false;
+            }
+            for (int i = 0; i < expectedNames.size(); i++) {
+                if (!metadataNameMatcher.matchesMetadataName(expectedNames.get(i), actualNames.get(i))) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
