@@ -273,6 +273,16 @@ class DDLAutoDb2IntegrationTest {
     }
 
     @Test
+    void db2ShouldRejectPrimaryKeyAutoIncrementModifyInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(
+                    DbType.DB2,
+                    connection
+            );
+        }
+    }
+
+    @Test
     void db2ShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(

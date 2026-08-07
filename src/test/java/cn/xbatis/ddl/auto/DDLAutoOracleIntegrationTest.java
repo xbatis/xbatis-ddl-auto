@@ -194,6 +194,16 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
+    void oracleShouldRejectPrimaryKeyAutoIncrementModifyInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(
+                    DbType.ORACLE,
+                    connection
+            );
+        }
+    }
+
+    @Test
     void oracleShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(

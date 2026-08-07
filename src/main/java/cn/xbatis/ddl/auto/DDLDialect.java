@@ -72,11 +72,17 @@ public class DDLDialect {
 
     public String getIntegerType(IDbType dbType) {
         validateDbType(dbType);
+        if (isDm(dbType)) {
+            return "INTEGER";
+        }
         return isOracle(dbType) ? "NUMBER(10)" : "INTEGER";
     }
 
     public String getBigIntType(IDbType dbType) {
         validateDbType(dbType);
+        if (isDm(dbType)) {
+            return "BIGINT";
+        }
         return isOracle(dbType) ? "NUMBER(19)" : "BIGINT";
     }
 
@@ -227,6 +233,20 @@ public class DDLDialect {
     public boolean supportsModifyColumn(IDbType dbType) {
         validateDbType(dbType);
         return dbType != DbType.CLICK_HOUSE && !isSqlite(dbType);
+    }
+
+    public boolean supportsModifyAutoIncrement(IDbType dbType) {
+        return supportsInlineModifyAutoIncrement(dbType) || supportsSeparatedModifyAutoIncrement(dbType);
+    }
+
+    public boolean supportsInlineModifyAutoIncrement(IDbType dbType) {
+        validateDbType(dbType);
+        return isMysql(dbType);
+    }
+
+    public boolean supportsSeparatedModifyAutoIncrement(IDbType dbType) {
+        validateDbType(dbType);
+        return isPostgresql(dbType) || isDm(dbType);
     }
 
     public boolean supportsMultipleModifyColumns(IDbType dbType) {

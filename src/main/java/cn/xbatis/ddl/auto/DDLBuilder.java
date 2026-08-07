@@ -146,6 +146,20 @@ public interface DDLBuilder {
     }
 
     /**
+     * 为指定物理表批量生成修改字段自增策略 SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columns     需要修改自增策略的列元数据集合
+     * @param tableName   物理表名
+     * @return 修改字段自增策略 SQL 列表
+     */
+    default List<String> modifyColumnAutoIncrementSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        Objects.requireNonNull(tableName, "tableName");
+        return Collections.emptyList();
+    }
+
+    /**
      * 为指定物理表批量生成修改字段备注 SQL 列表。
      *
      * @param dbType      数据库类型

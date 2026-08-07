@@ -212,6 +212,28 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
+    void mysqlShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_auto_id_user MODIFY COLUMN id BIGINT AUTO_INCREMENT NOT NULL;"
+            );
+        }
+    }
+
+    @Test
+    void mysqlShouldRemovePrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementReverseFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_auto_id_reverse_user MODIFY COLUMN id BIGINT NOT NULL;"
+            );
+        }
+    }
+
+    @Test
     void mysqlShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(

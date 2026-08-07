@@ -1545,24 +1545,41 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     protected List<String> createModifyColumnSqlList(IDbType dbType, EntityDDLMetadata entityMetadata, String tableName, DatabaseMetadata databaseMetadata) {
         TableInfo tableInfo = entityMetadata.getTableInfo();
         List<ColumnInfo> columns = entityMetadata.getColumns();
-        if (columns.isEmpty() || databaseMetadata == null || !dialect.supportsModifyColumn(dbType)) {
+        if (columns.isEmpty() || databaseMetadata == null) {
             return Collections.emptyList();
         }
-        MetadataNameIndex primaryKeyColumnNameIndex = metadataNameIndex(databaseMetadata.getPrimaryKeyColumnNames(tableInfo, tableName));
+        int idColumnCount = entityIdColumnCount(columns);
+        if (!dialect.supportsModifyColumn(dbType)) {
+            List<ColumnInfo> autoIncrementModifiedColumns = createAutoIncrementModifiedColumnList(dbType,
+                    tableInfo, columns, tableName, databaseMetadata, idColumnCount);
+            if (autoIncrementModifiedColumns.isEmpty()) {
+                return Collections.emptyList();
+            }
+            if (dialect.supportsSeparatedModifyAutoIncrement(dbType)) {
+                return ddlBuilder.modifyColumnAutoIncrementSqlList(dbType, tableInfo, autoIncrementModifiedColumns, tableName);
+            }
+            throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
+        }
         List<ColumnInfo> modifiedColumns = new ArrayList<>();
         List<ColumnInfo> commentModifiedColumns = new ArrayList<>();
+        List<ColumnInfo> autoIncrementModifiedColumns = new ArrayList<>();
         for (ColumnInfo column : columns) {
-            if (primaryKeyColumnNameIndex.contains(column.getName())) {
-                continue;
-            }
             ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, column.getName());
             if (columnMetadata == null) {
                 continue;
             }
             boolean typeChanged = columnTypeChanged(dbType, column, columnMetadata);
             boolean commentChanged = columnCommentChanged(column, columnMetadata);
-            if (typeChanged || (dialect.isMysql(dbType) && commentChanged)) {
+            boolean autoIncrementChanged = columnAutoIncrementChanged(column, columnMetadata, idColumnCount);
+            if (autoIncrementChanged && !dialect.supportsModifyAutoIncrement(dbType)) {
+                throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
+            }
+            boolean inlineAutoIncrementChanged = autoIncrementChanged && dialect.supportsInlineModifyAutoIncrement(dbType);
+            if (typeChanged || inlineAutoIncrementChanged || (dialect.isMysql(dbType) && commentChanged)) {
                 modifiedColumns.add(column);
+            }
+            if (autoIncrementChanged && dialect.supportsSeparatedModifyAutoIncrement(dbType)) {
+                autoIncrementModifiedColumns.add(column);
             }
             if (commentChanged && !dialect.isMysql(dbType)) {
                 commentModifiedColumns.add(column);
@@ -1572,6 +1589,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (!modifiedColumns.isEmpty()) {
             sqlList.addAll(ddlBuilder.modifyColumnSqlList(dbType, tableInfo, modifiedColumns, tableName));
         }
+        if (!autoIncrementModifiedColumns.isEmpty()) {
+            sqlList.addAll(ddlBuilder.modifyColumnAutoIncrementSqlList(dbType, tableInfo, autoIncrementModifiedColumns, tableName));
+        }
         if (!commentModifiedColumns.isEmpty()) {
             sqlList.addAll(createModifyColumnCommentSqlList(dbType, entityMetadata, tableName, databaseMetadata, commentModifiedColumns));
         }
@@ -1579,6 +1599,29 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             databaseMetadata.addColumns(tableInfo, tableName, modifiedColumns);
         }
         return sqlList;
+    }
+
+    /**
+     * 找出 JDBC 元数据中自增策略和实体定义不一致的列。
+     */
+    protected List<ColumnInfo> createAutoIncrementModifiedColumnList(IDbType dbType,
+                                                                     TableInfo tableInfo,
+                                                                     Collection<ColumnInfo> columns,
+                                                                     String tableName,
+                                                                     DatabaseMetadata databaseMetadata,
+                                                                     int idColumnCount) {
+        List<ColumnInfo> autoIncrementModifiedColumns = new ArrayList<>();
+        for (ColumnInfo column : columns) {
+            ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, column.getName());
+            if (columnMetadata == null || !columnAutoIncrementChanged(column, columnMetadata, idColumnCount)) {
+                continue;
+            }
+            if (!dialect.supportsModifyAutoIncrement(dbType)) {
+                throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
+            }
+            autoIncrementModifiedColumns.add(column);
+        }
+        return autoIncrementModifiedColumns;
     }
 
     /**
@@ -1628,6 +1671,54 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         String expectedType = normalizeColumnTypeSignature(dbType, buildExpectedColumnTypeSignature(dbType, column));
         String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
         return !expectedType.equals(actualType);
+    }
+
+    /**
+     * 判断列的自增策略是否发生变化。
+     */
+    protected boolean columnAutoIncrementChanged(ColumnInfo column, ColumnMetadata columnMetadata, int idColumnCount) {
+        Boolean actualAutoIncrement = actualAutoIncrement(columnMetadata);
+        if (actualAutoIncrement == null) {
+            return false;
+        }
+        return expectedAutoIncrement(column, idColumnCount) != actualAutoIncrement;
+    }
+
+    /**
+     * 判断实体列是否预期为数据库自增主键。
+     */
+    protected boolean expectedAutoIncrement(ColumnInfo column, int idColumnCount) {
+        return idColumnCount == 1 && column.isId() && column.getIdAutoType() == IdAutoType.AUTO;
+    }
+
+    /**
+     * 读取 JDBC 元数据中的自增标识，未知值不参与对比。
+     */
+    protected Boolean actualAutoIncrement(ColumnMetadata columnMetadata) {
+        if (columnMetadata == null || isBlank(columnMetadata.getIsAutoIncrement())) {
+            return null;
+        }
+        String value = columnMetadata.getIsAutoIncrement().trim();
+        if ("YES".equalsIgnoreCase(value) || "TRUE".equalsIgnoreCase(value)) {
+            return Boolean.TRUE;
+        }
+        if ("NO".equalsIgnoreCase(value) || "FALSE".equalsIgnoreCase(value)) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    /**
+     * 统计实体主键字段数量。
+     */
+    protected int entityIdColumnCount(Collection<ColumnInfo> columns) {
+        int count = 0;
+        for (ColumnInfo column : columns) {
+            if (column.isId()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

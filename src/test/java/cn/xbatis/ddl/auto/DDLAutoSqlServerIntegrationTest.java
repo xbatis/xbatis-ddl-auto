@@ -212,6 +212,16 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldRejectPrimaryKeyAutoIncrementModifyInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(
+                    DbType.SQL_SERVER,
+                    connection
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldModifyChangedColumnCommentInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyCommentFlow(

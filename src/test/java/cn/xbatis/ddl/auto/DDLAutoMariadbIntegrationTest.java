@@ -125,6 +125,22 @@ class DDLAutoMariadbIntegrationTest extends DDLAutoExternalDatabaseIntegrationSu
     }
 
     @Test
+    void mariadbShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        assertSyncModifyAutoIncrementFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_modify_auto_id_user MODIFY COLUMN id BIGINT AUTO_INCREMENT NOT NULL;"
+        );
+    }
+
+    @Test
+    void mariadbShouldRemovePrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        assertSyncModifyAutoIncrementReverseFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_modify_auto_id_reverse_user MODIFY COLUMN id BIGINT NOT NULL;"
+        );
+    }
+
+    @Test
     void mariadbShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
         assertSyncModifyBatchFlow(
                 DATABASE,

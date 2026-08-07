@@ -143,6 +143,16 @@ class DDLAutoSqliteIntegrationTest {
     }
 
     @Test
+    void sqliteShouldRejectPrimaryKeyAutoIncrementModifyInSyncMode() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(
+                    DbType.SQLITE,
+                    connection
+            );
+        }
+    }
+
+    @Test
     void sqliteShouldCreateTableDefinition() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             DDLAutoExternalDatabaseIntegrationSupport.assertTableDefinitionFlow(

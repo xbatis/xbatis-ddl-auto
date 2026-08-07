@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -160,6 +162,34 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
                     SyncModifyUserV2.class,
                     "auto_sync_modify_user",
                     "ALTER TABLE auto_sync_modify_user ALTER COLUMN username TYPE VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void gaussShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyAutoIncrementFlow(
+                    DbType.GAUSS,
+                    connection,
+                    Arrays.asList(
+                            "CREATE SEQUENCE auto_sync_modify_auto_id_user_id_seq OWNED BY auto_sync_modify_auto_id_user.id;",
+                            "ALTER TABLE auto_sync_modify_auto_id_user ALTER COLUMN id SET DEFAULT nextval('auto_sync_modify_auto_id_user_id_seq');"
+                    )
+            );
+        }
+    }
+
+    @Test
+    void gaussShouldRemovePrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyAutoIncrementReverseFlow(
+                    DbType.GAUSS,
+                    connection,
+                    Arrays.asList(
+                            "ALTER TABLE auto_sync_modify_auto_id_reverse_user ALTER COLUMN id DROP DEFAULT;",
+                            "DROP SEQUENCE IF EXISTS auto_sync_modify_auto_id_reverse_user_id_seq;"
+                    )
             );
         }
     }

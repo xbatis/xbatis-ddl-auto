@@ -40,6 +40,10 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
     private static final String SYNC_MODIFY_TABLE = "auto_sync_modify_user";
 
+    private static final String SYNC_MODIFY_AUTO_ID_TABLE = "auto_sync_modify_auto_id_user";
+
+    private static final String SYNC_MODIFY_AUTO_ID_REVERSE_TABLE = "auto_sync_modify_auto_id_reverse_user";
+
     private static final String SYNC_MODIFY_COMMENT_TABLE = "auto_sync_modify_comment_user";
 
     static void assertCreateUpdateFlow(DatabaseCase databaseCase,
@@ -330,6 +334,134 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                     "Expected no DDL after sync batch modify flow already executed: " + verifyExecutedSqlList);
         } finally {
             dropTestTable(connection, tableName);
+        }
+    }
+
+    static void assertSyncModifyAutoIncrementFlow(DatabaseCase databaseCase,
+                                                  String expectedModifySql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyAutoIncrementFlow(databaseCase.dbType, connection,
+                    Collections.singletonList(expectedModifySql));
+        }
+    }
+
+    static void assertSyncModifyAutoIncrementFlow(IDbType dbType,
+                                                  Connection connection,
+                                                  String expectedModifySql) throws Exception {
+        assertSyncModifyAutoIncrementFlow(dbType, connection, Collections.singletonList(expectedModifySql));
+    }
+
+    static void assertSyncModifyAutoIncrementFlow(IDbType dbType,
+                                                  Connection connection,
+                                                  List<String> expectedModifySqlList) throws Exception {
+        dropTestTable(connection, SYNC_MODIFY_AUTO_ID_TABLE);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(SyncModifyAutoIdUserV1.class)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, SYNC_MODIFY_AUTO_ID_TABLE));
+            assertTrue(columnExists(connection, SYNC_MODIFY_AUTO_ID_TABLE, "id"));
+            assertFalse(columnAutoIncrement(connection, SYNC_MODIFY_AUTO_ID_TABLE, "id"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(SyncModifyAutoIdUserV2.class)
+                    .execute(connection);
+
+            assertEquals(expectedModifySqlList, syncExecutedSqlList);
+            assertTrue(columnAutoIncrement(connection, SYNC_MODIFY_AUTO_ID_TABLE, "id"));
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(SyncModifyAutoIdUserV2.class)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync auto increment modify flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, SYNC_MODIFY_AUTO_ID_TABLE);
+        }
+    }
+
+    static void assertSyncModifyAutoIncrementReverseFlow(DatabaseCase databaseCase,
+                                                         String expectedModifySql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyAutoIncrementReverseFlow(databaseCase.dbType, connection,
+                    Collections.singletonList(expectedModifySql));
+        }
+    }
+
+    static void assertSyncModifyAutoIncrementReverseFlow(IDbType dbType,
+                                                         Connection connection,
+                                                         String expectedModifySql) throws Exception {
+        assertSyncModifyAutoIncrementReverseFlow(dbType, connection, Collections.singletonList(expectedModifySql));
+    }
+
+    static void assertSyncModifyAutoIncrementReverseFlow(IDbType dbType,
+                                                         Connection connection,
+                                                         List<String> expectedModifySqlList) throws Exception {
+        dropTestTable(connection, SYNC_MODIFY_AUTO_ID_REVERSE_TABLE);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(SyncModifyAutoIdReverseUserV1.class)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, SYNC_MODIFY_AUTO_ID_REVERSE_TABLE));
+            assertTrue(columnExists(connection, SYNC_MODIFY_AUTO_ID_REVERSE_TABLE, "id"));
+            assertTrue(columnAutoIncrement(connection, SYNC_MODIFY_AUTO_ID_REVERSE_TABLE, "id"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(SyncModifyAutoIdReverseUserV2.class)
+                    .execute(connection);
+
+            assertEquals(expectedModifySqlList, syncExecutedSqlList);
+            assertFalse(columnAutoIncrement(connection, SYNC_MODIFY_AUTO_ID_REVERSE_TABLE, "id"));
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(SyncModifyAutoIdReverseUserV2.class)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync reverse auto increment modify flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, SYNC_MODIFY_AUTO_ID_REVERSE_TABLE);
+        }
+    }
+
+    static void assertSyncModifyAutoIncrementUnsupported(DatabaseCase databaseCase) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyAutoIncrementUnsupported(databaseCase.dbType, connection);
+        }
+    }
+
+    static void assertSyncModifyAutoIncrementUnsupported(IDbType dbType, Connection connection) throws Exception {
+        dropTestTable(connection, SYNC_MODIFY_AUTO_ID_TABLE);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(SyncModifyAutoIdUserV1.class)
+                    .execute(connection);
+
+            UnsupportedOperationException exception = assertThrows(UnsupportedOperationException.class, () ->
+                    DDLTestPrinter.ddl(dbType)
+                            .builder(new DefaultDDLBuilder())
+                            .mode(Mode.SYNC)
+                            .add(SyncModifyAutoIdUserV2.class)
+                            .execute(connection));
+            assertTrue(exception.getMessage().contains("does not support MODIFY AUTO_INCREMENT"));
+        } finally {
+            dropTestTable(connection, SYNC_MODIFY_AUTO_ID_TABLE);
         }
     }
 
@@ -965,6 +1097,23 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         return null;
     }
 
+    static boolean columnAutoIncrement(Connection connection, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metadata = connection.getMetaData();
+        for (MetadataScope scope : metadataScopes(connection)) {
+            for (String tableCandidate : nameCandidates(tableName)) {
+                for (String columnCandidate : nameCandidates(columnName)) {
+                    try (ResultSet resultSet = metadata.getColumns(scope.catalog, scope.schema, tableCandidate, columnCandidate)) {
+                        if (resultSet.next()) {
+                            String value = resultSet.getString("IS_AUTOINCREMENT");
+                            return "YES".equalsIgnoreCase(value) || "TRUE".equalsIgnoreCase(value);
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     static Integer columnDecimalDigits(Connection connection, String tableName, String columnName) throws SQLException {
         DatabaseMetaData metadata = connection.getMetaData();
         for (MetadataScope scope : metadataScopes(connection)) {
@@ -1370,6 +1519,46 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         private Long id;
 
         @ColumnDefinition(length = 128)
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_AUTO_ID_TABLE)
+    static class SyncModifyAutoIdUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_AUTO_ID_TABLE)
+    static class SyncModifyAutoIdUserV2 {
+
+        @TableId(value = IdAutoType.AUTO)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_AUTO_ID_REVERSE_TABLE)
+    static class SyncModifyAutoIdReverseUserV1 {
+
+        @TableId(value = IdAutoType.AUTO)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_AUTO_ID_REVERSE_TABLE)
+    static class SyncModifyAutoIdReverseUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
         private String username;
     }
 

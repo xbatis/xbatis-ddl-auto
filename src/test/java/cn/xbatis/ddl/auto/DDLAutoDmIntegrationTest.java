@@ -40,7 +40,7 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
     void dmShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
         assertMultiColumnAddColumnFlow(
                 DATABASE,
-                "ALTER TABLE auto_multi_column_add_user ADD (age NUMBER(10), email VARCHAR2(128));"
+                "ALTER TABLE auto_multi_column_add_user ADD (age INTEGER, email VARCHAR2(128));"
         );
     }
 
@@ -78,8 +78,8 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
                 DATABASE,
                 "id INTEGER IDENTITY(1,1) NOT NULL PRIMARY KEY",
                 "id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY",
-                "id NUMBER(10) NOT NULL PRIMARY KEY",
-                "id NUMBER(19) NOT NULL PRIMARY KEY"
+                "id INTEGER NOT NULL PRIMARY KEY",
+                "id BIGINT NOT NULL PRIMARY KEY"
         );
     }
 
@@ -121,6 +121,22 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
                 SyncModifyUserV2.class,
                 "auto_sync_modify_user",
                 "ALTER TABLE auto_sync_modify_user MODIFY (username VARCHAR2(128));"
+        );
+    }
+
+    @Test
+    void dmShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        assertSyncModifyAutoIncrementFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_modify_auto_id_user ADD COLUMN id IDENTITY(1,1);"
+        );
+    }
+
+    @Test
+    void dmShouldRemovePrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        assertSyncModifyAutoIncrementReverseFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_modify_auto_id_reverse_user DROP IDENTITY;"
         );
     }
 
