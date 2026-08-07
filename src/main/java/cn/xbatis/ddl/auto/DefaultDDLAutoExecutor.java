@@ -418,11 +418,23 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 sqlList.addAll(createAddSequenceSqlList(dbType, entityMetadata, databaseMetadata));
                 if (mode == Mode.SYNC) {
                     sqlList.addAll(createDropIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
-                    sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
-                    sqlList.addAll(createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                    if (dbType == DbType.DB2) {
+                        // DB2 的 DROP COLUMN 会把表置为 REORG PENDING，期间不允许 CREATE INDEX，
+                        // 因此 DB2 需要先建索引，最后再删列
+                        sqlList.addAll(createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                    } else {
+                        sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                    }
+                } else {
+                    sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                    sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                 }
-                sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
-                sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
             }
         }
         return sqlList;
