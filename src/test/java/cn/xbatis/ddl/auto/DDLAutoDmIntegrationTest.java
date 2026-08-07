@@ -140,6 +140,17 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
         );
     }
 
+    @Test
+    void dmShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        assertSyncModifyCommentFlow(
+                DATABASE,
+                SyncModifyCommentUserV1.class,
+                SyncModifyCommentUserV2.class,
+                "auto_sync_modify_comment_user",
+                "COMMENT ON COLUMN auto_sync_modify_comment_user.username IS 'new comment';"
+        );
+    }
+
     @Table("auto_dm_itg_user")
     @Index(name = "idx_dm_itg_user_name", fields = @IndexField(name = "username"))
     static class DmIntegrationUserV1 {

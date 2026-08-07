@@ -987,9 +987,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      * 从 JDBC 元数据结果集中读取数据列。
      */
     protected void readColumnMetadata(DatabaseMetaData metaData, String catalog, String schema, String tableName, DatabaseMetadata databaseMetadata) throws SQLException {
+        List<ColumnMetadata> columns = new ArrayList<>();
         try (ResultSet resultSet = metaData.getColumns(catalog, schema, tableName, null)) {
             while (resultSet.next()) {
-                databaseMetadata.addColumn(
+                columns.add(new ColumnMetadata(
                         getString(resultSet, "TABLE_CAT"),
                         getString(resultSet, "TABLE_SCHEM"),
                         getString(resultSet, "TABLE_NAME"),
@@ -1001,10 +1002,109 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                         getInt(resultSet, "NULLABLE"),
                         getString(resultSet, "COLUMN_DEF"),
                         getString(resultSet, "IS_AUTOINCREMENT"),
-                        getString(resultSet, "IS_GENERATEDCOLUMN")
-                );
+                        getString(resultSet, "IS_GENERATEDCOLUMN"),
+                        getString(resultSet, "REMARKS")
+                ));
             }
         }
+        Map<String, Map<String, String>> sqlServerColumnRemarksByTable = supportsSqlServerColumnRemarks(metaData)
+                ? new LinkedHashMap<>()
+                : null;
+        for (ColumnMetadata column : columns) {
+            String remarks = column.remarks;
+            if (sqlServerColumnRemarksByTable != null) {
+                String remarksCatalog = isBlank(column.catalog) ? catalog : column.catalog;
+                String remarksSchema = isBlank(column.schema) ? schema : column.schema;
+                String remarksTableName = isBlank(column.tableName) ? tableName : column.tableName;
+                remarks = resolveSqlServerColumnRemarks(metaData, sqlServerColumnRemarksByTable,
+                        remarksCatalog, remarksSchema, remarksTableName, column.columnName, remarks);
+            }
+            databaseMetadata.addColumn(
+                    column.catalog,
+                    column.schema,
+                    column.tableName,
+                    column.columnName,
+                    column.dataType,
+                    column.typeName,
+                    column.columnSize,
+                    column.decimalDigits,
+                    column.nullable,
+                    column.columnDefault,
+                    column.isAutoIncrement,
+                    column.isGeneratedColumn,
+                    remarks
+            );
+        }
+    }
+
+    /**
+     * SQL Server JDBC REMARKS 经常不返回扩展属性，这里用系统目录补齐列备注。
+     */
+    protected boolean supportsSqlServerColumnRemarks(DatabaseMetaData metaData) {
+        if (metaData == null) {
+            return false;
+        }
+        try {
+            String productName = metaData.getDatabaseProductName();
+            return productName != null && productName.toLowerCase(Locale.ROOT).contains("sql server");
+        } catch (SQLException ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * 读取 SQL Server 列备注，扩展属性未命中时保留 JDBC REMARKS 原值。
+     */
+    protected String resolveSqlServerColumnRemarks(DatabaseMetaData metaData,
+                                                  Map<String, Map<String, String>> columnRemarksByTable,
+                                                  String catalog,
+                                                  String schema,
+                                                  String tableName,
+                                                  String columnName,
+                                                  String fallbackRemarks) throws SQLException {
+        if (isBlank(tableName) || isBlank(columnName)) {
+            return fallbackRemarks;
+        }
+        String tableKey = metadataReadKey(catalog, schema, tableName);
+        Map<String, String> columnRemarks = columnRemarksByTable.get(tableKey);
+        if (columnRemarks == null) {
+            columnRemarks = readSqlServerColumnRemarks(metaData, schema, tableName);
+            columnRemarksByTable.put(tableKey, columnRemarks);
+        }
+        String columnKey = normalize(columnName);
+        return columnRemarks.containsKey(columnKey) ? columnRemarks.get(columnKey) : fallbackRemarks;
+    }
+
+    /**
+     * 从 SQL Server 扩展属性目录读取指定表的列备注。
+     */
+    protected Map<String, String> readSqlServerColumnRemarks(DatabaseMetaData metaData, String schema, String tableName) throws SQLException {
+        String schemaName = unquoteIdentifier(schema);
+        String actualTableName = unquoteIdentifier(tableName);
+        if (metaData == null || isBlank(schemaName) || isBlank(actualTableName)) {
+            return Collections.emptyMap();
+        }
+        String sql = "SELECT c.name AS column_name, CAST(ep.value AS NVARCHAR(4000)) AS remarks "
+                + "FROM sys.tables t "
+                + "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                + "JOIN sys.columns c ON c.object_id = t.object_id "
+                + "LEFT JOIN sys.extended_properties ep ON ep.class = 1 "
+                + "AND ep.major_id = t.object_id "
+                + "AND ep.minor_id = c.column_id "
+                + "AND ep.name = N'MS_Description' "
+                + "WHERE s.name = ? AND t.name = ?";
+        Map<String, String> columnRemarks = new LinkedHashMap<>();
+        try (PreparedStatement statement = metaData.getConnection().prepareStatement(sql)) {
+            statement.setString(1, schemaName);
+            statement.setString(2, actualTableName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    columnRemarks.put(normalize(getString(resultSet, "column_name")),
+                            getString(resultSet, "remarks"));
+                }
+            }
+        }
+        return columnRemarks;
     }
 
     /**
@@ -1450,6 +1550,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         MetadataNameIndex primaryKeyColumnNameIndex = metadataNameIndex(databaseMetadata.getPrimaryKeyColumnNames(tableInfo, tableName));
         List<ColumnInfo> modifiedColumns = new ArrayList<>();
+        List<ColumnInfo> commentModifiedColumns = new ArrayList<>();
         for (ColumnInfo column : columns) {
             if (primaryKeyColumnNameIndex.contains(column.getName())) {
                 continue;
@@ -1458,16 +1559,64 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             if (columnMetadata == null) {
                 continue;
             }
-            if (columnTypeChanged(dbType, column, columnMetadata)) {
+            boolean typeChanged = columnTypeChanged(dbType, column, columnMetadata);
+            boolean commentChanged = columnCommentChanged(column, columnMetadata);
+            if (typeChanged || (dialect.isMysql(dbType) && commentChanged)) {
                 modifiedColumns.add(column);
             }
+            if (commentChanged && !dialect.isMysql(dbType)) {
+                commentModifiedColumns.add(column);
+            }
         }
-        if (modifiedColumns.isEmpty()) {
-            return Collections.emptyList();
+        List<String> sqlList = new ArrayList<>();
+        if (!modifiedColumns.isEmpty()) {
+            sqlList.addAll(ddlBuilder.modifyColumnSqlList(dbType, tableInfo, modifiedColumns, tableName));
         }
-        List<String> sqlList = ddlBuilder.modifyColumnSqlList(dbType, tableInfo, modifiedColumns, tableName);
+        if (!commentModifiedColumns.isEmpty()) {
+            sqlList.addAll(createModifyColumnCommentSqlList(dbType, entityMetadata, tableName, databaseMetadata, commentModifiedColumns));
+        }
         if (databaseMetadata != null) {
             databaseMetadata.addColumns(tableInfo, tableName, modifiedColumns);
+        }
+        return sqlList;
+    }
+
+    /**
+     * 为数据库中备注发生变化的实体字段生成 COMMENT SQL。
+     */
+    protected List<String> createModifyColumnCommentSqlList(IDbType dbType,
+                                                            EntityDDLMetadata entityMetadata,
+                                                            String tableName,
+                                                            DatabaseMetadata databaseMetadata,
+                                                            Collection<ColumnInfo> columns) {
+        if (columns.isEmpty() || databaseMetadata == null || !dialect.supportsColumnCommentStatement(dbType) || dialect.isMysql(dbType)) {
+            return Collections.emptyList();
+        }
+        TableInfo tableInfo = entityMetadata.getTableInfo();
+        if (dbType == DbType.SQL_SERVER) {
+            return createSqlServerModifyColumnCommentSqlList(tableInfo, tableName, columns, databaseMetadata);
+        }
+        return ddlBuilder.columnCommentSqlList(dbType, tableInfo, columns, tableName);
+    }
+
+    /**
+     * 为 SQL Server 备注修改生成 SQL。
+     */
+    protected List<String> createSqlServerModifyColumnCommentSqlList(TableInfo tableInfo,
+                                                                    String tableName,
+                                                                    Collection<ColumnInfo> columns,
+                                                                    DatabaseMetadata databaseMetadata) {
+        List<String> sqlList = new ArrayList<>();
+        for (ColumnInfo column : columns) {
+            ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, column.getName());
+            if (columnMetadata == null) {
+                continue;
+            }
+            String comment = normalizeComment(column.getDefinition().comment());
+            if (isBlank(comment)) {
+                continue;
+            }
+            sqlList.add(buildSqlServerColumnCommentSql(tableInfo, tableName, column, comment, !isBlank(columnMetadata.getRemarks())));
         }
         return sqlList;
     }
@@ -1479,6 +1628,18 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         String expectedType = normalizeColumnTypeSignature(dbType, buildExpectedColumnTypeSignature(dbType, column));
         String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
         return !expectedType.equals(actualType);
+    }
+
+    /**
+     * 判断列备注是否发生变化。
+     */
+    protected boolean columnCommentChanged(ColumnInfo column, ColumnMetadata columnMetadata) {
+        String expectedComment = normalizeComment(column.getDefinition().comment());
+        if (isBlank(expectedComment)) {
+            return false;
+        }
+        String actualComment = normalizeComment(columnMetadata.getRemarks());
+        return !expectedComment.equals(actualComment);
     }
 
     /**
@@ -1581,6 +1742,43 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return "TINYINT(1)";
         }
         return signature.toString();
+    }
+
+    /**
+     * 统一列备注内容格式。
+     */
+    protected String normalizeComment(String comment) {
+        if (isBlank(comment)) {
+            return "";
+        }
+        return comment.trim();
+    }
+
+    /**
+     * 生成 SQL Server 字段注释扩展属性语句。
+     */
+    protected String buildSqlServerColumnCommentSql(TableInfo tableInfo, String tableName, ColumnInfo column, String comment, boolean update) {
+        String schema = tableInfo.getSchema();
+        StringBuilder ddl = new StringBuilder();
+        if (isBlank(schema)) {
+            ddl.append("DECLARE @schema sysname = SCHEMA_NAME(); ");
+        }
+        ddl.append("EXEC sys.sp_")
+                .append(update ? "update" : "add")
+                .append("extendedproperty ")
+                .append("@name=N'MS_Description', ")
+                .append("@value=N'").append(escapeSqlString(comment)).append("', ")
+                .append("@level0type=N'SCHEMA', ");
+        if (isBlank(schema)) {
+            ddl.append("@level0name=@schema, ");
+        } else {
+            ddl.append("@level0name=N'").append(escapeSqlString(schema)).append("', ");
+        }
+        ddl.append("@level1type=N'TABLE', ")
+                .append("@level1name=N'").append(escapeSqlString(tableName)).append("', ")
+                .append("@level2type=N'COLUMN', ")
+                .append("@level2name=N'").append(escapeSqlString(column.getName())).append("';");
+        return ddl.toString();
     }
 
     /**
@@ -2220,9 +2418,11 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final String isGeneratedColumn;
 
+        private final String remarks;
+
         ColumnMetadata(String catalog, String schema, String tableName, String columnName,
                        int dataType, String typeName, int columnSize, int decimalDigits, int nullable,
-                       String columnDefault, String isAutoIncrement, String isGeneratedColumn) {
+                       String columnDefault, String isAutoIncrement, String isGeneratedColumn, String remarks) {
             this.catalog = catalog;
             this.schema = schema;
             this.tableName = tableName;
@@ -2235,6 +2435,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             this.columnDefault = columnDefault;
             this.isAutoIncrement = isAutoIncrement;
             this.isGeneratedColumn = isGeneratedColumn;
+            this.remarks = remarks;
         }
 
         String getColumnName() {
@@ -2271,6 +2472,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         String getIsGeneratedColumn() {
             return isGeneratedColumn;
+        }
+
+        String getRemarks() {
+            return remarks;
         }
     }
 
@@ -2347,13 +2552,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
 
         void addColumn(String catalog, String schema, String tableName, String columnName) {
-            addColumn(catalog, schema, tableName, columnName, -1, null, 0, 0, DatabaseMetaData.columnNullableUnknown, null, null, null);
+            addColumn(catalog, schema, tableName, columnName, -1, null, 0, 0, DatabaseMetaData.columnNullableUnknown, null, null, null, null);
         }
 
         void addColumn(String catalog, String schema, String tableName, String columnName, int dataType, String typeName,
-                       int columnSize, int decimalDigits, int nullable, String columnDefault, String isAutoIncrement, String isGeneratedColumn) {
+                       int columnSize, int decimalDigits, int nullable, String columnDefault, String isAutoIncrement, String isGeneratedColumn, String remarks) {
             put(columnsByTableName, metadataLookupKey(tableName), new ColumnMetadata(catalog, schema, tableName, columnName,
-                    dataType, typeName, columnSize, decimalDigits, nullable, columnDefault, isAutoIncrement, isGeneratedColumn));
+                    dataType, typeName, columnSize, decimalDigits, nullable, columnDefault, isAutoIncrement, isGeneratedColumn, remarks));
         }
 
         void addIndexes(TableInfo tableInfo, Collection<IndexInfo> addIndexes) {
@@ -2696,5 +2901,12 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
     protected boolean isBlank(String value) {
         return metadataNameMatcher.isBlank(value);
+    }
+
+    /**
+     * 转义 SQL 字符串字面量。
+     */
+    protected String escapeSqlString(String value) {
+        return value == null ? null : value.replace("'", "''");
     }
 }

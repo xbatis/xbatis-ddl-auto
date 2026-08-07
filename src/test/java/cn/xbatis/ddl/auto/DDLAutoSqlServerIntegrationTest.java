@@ -212,6 +212,24 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyCommentFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyCommentUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyCommentUserV2.class,
+                    "auto_sync_modify_comment_user",
+                    "DECLARE @schema sysname = SCHEMA_NAME(); EXEC sys.sp_updateextendedproperty "
+                            + "@name=N'MS_Description', @value=N'new comment', @level0type=N'SCHEMA', "
+                            + "@level0name=@schema, @level1type=N'TABLE', "
+                            + "@level1name=N'auto_sync_modify_comment_user', @level2type=N'COLUMN', "
+                            + "@level2name=N'username';"
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(

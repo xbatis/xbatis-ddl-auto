@@ -212,6 +212,20 @@ class DDLAutoOracleIntegrationTest {
         }
     }
 
+    @Test
+    void oracleShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyCommentFlow(
+                    DbType.ORACLE,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyCommentUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyCommentUserV2.class,
+                    "auto_sync_modify_comment_user",
+                    "COMMENT ON COLUMN auto_sync_modify_comment_user.username IS 'new comment';"
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             return DriverManager.getConnection(ORACLE_URL, connectionProperties());

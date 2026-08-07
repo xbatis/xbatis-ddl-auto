@@ -230,6 +230,20 @@ class DDLAutoMysqlIntegrationTest {
         }
     }
 
+    @Test
+    void mysqlShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyCommentFlow(
+                    DbType.MYSQL,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyCommentUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyCommentUserV2.class,
+                    "auto_sync_modify_comment_user",
+                    "ALTER TABLE auto_sync_modify_comment_user MODIFY COLUMN username VARCHAR(64) NOT NULL COMMENT 'new comment';"
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             return DriverManager.getConnection(databaseUrl(), MYSQL_USERNAME, MYSQL_PASSWORD);

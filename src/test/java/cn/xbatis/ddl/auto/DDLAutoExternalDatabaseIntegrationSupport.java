@@ -40,6 +40,8 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
     private static final String SYNC_MODIFY_TABLE = "auto_sync_modify_user";
 
+    private static final String SYNC_MODIFY_COMMENT_TABLE = "auto_sync_modify_comment_user";
+
     static void assertCreateUpdateFlow(DatabaseCase databaseCase,
                                        Class<?> v1Entity,
                                        Class<?> v2Entity,
@@ -212,6 +214,55 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                     .execute(connection);
             assertTrue(verifyExecutedSqlList.isEmpty(),
                     "Expected no DDL after sync modify flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, tableName);
+        }
+    }
+
+    static void assertSyncModifyCommentFlow(DatabaseCase databaseCase,
+                                            Class<?> v1Entity,
+                                            Class<?> v2Entity,
+                                            String tableName,
+                                            String expectedModifySql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyCommentFlow(databaseCase.dbType, connection, v1Entity, v2Entity, tableName, expectedModifySql);
+        }
+    }
+
+    static void assertSyncModifyCommentFlow(IDbType dbType,
+                                            Connection connection,
+                                            Class<?> v1Entity,
+                                            Class<?> v2Entity,
+                                            String tableName,
+                                            String expectedModifySql) throws Exception {
+        dropTestTable(connection, tableName);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(v1Entity)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, tableName));
+            assertTrue(columnExists(connection, tableName, "id"));
+            assertTrue(columnExists(connection, tableName, "username"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+
+            assertEquals(Collections.singletonList(expectedModifySql), syncExecutedSqlList);
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync modify comment flow already executed: " + verifyExecutedSqlList);
         } finally {
             dropTestTable(connection, tableName);
         }
@@ -1346,6 +1397,26 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @ColumnDefinition(precision = 18, scale = 4)
         private BigDecimal balance;
+    }
+
+    @Table(SYNC_MODIFY_COMMENT_TABLE)
+    static class SyncModifyCommentUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false, comment = "old comment")
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_COMMENT_TABLE)
+    static class SyncModifyCommentUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false, comment = "new comment")
+        private String username;
     }
 
     private static class MetadataScope {

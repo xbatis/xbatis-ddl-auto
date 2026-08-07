@@ -776,6 +776,52 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void commentModifySqlShouldCoverInlineAndSeparatedVariants() {
+        CommentModifyExecutor creator = new CommentModifyExecutor();
+
+        assertEquals(Collections.singletonList("ALTER TABLE auto_comment_modify_user MODIFY COLUMN username VARCHAR(64) NOT NULL COMMENT 'new comment';"),
+                creator.exposeCommentModifySqlList(DbType.MYSQL, CommentModifyUserV2.class, "auto_comment_modify_user", "old comment"));
+        assertEquals(Collections.singletonList("COMMENT ON COLUMN auto_comment_modify_user.username IS 'new comment';"),
+                creator.exposeCommentModifySqlList(DbType.PGSQL, CommentModifyUserV2.class, "auto_comment_modify_user", "old comment"));
+
+        List<String> sqlServerSqlList = creator.exposeCommentModifySqlList(DbType.SQL_SERVER, CommentModifyUserV2.class,
+                "auto_comment_modify_user", "old comment");
+        assertEquals(1, sqlServerSqlList.size());
+        assertTrue(sqlServerSqlList.get(0).contains("sp_updateextendedproperty"));
+        assertTrue(sqlServerSqlList.get(0).contains("@level2name=N'username'"));
+    }
+
+    @Test
+    void sqlServerColumnRemarksShouldUseExtendedPropertiesWhenJdbcRemarksBlank() throws Exception {
+        SqlServerRemarkExecutor creator = new SqlServerRemarkExecutor(Collections.singletonMap("username", "old comment"));
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("TABLE_CAT", "catalog");
+        row.put("TABLE_SCHEM", "dbo");
+        row.put("TABLE_NAME", "auto_comment_modify_user");
+        row.put("COLUMN_NAME", "username");
+        row.put("DATA_TYPE", Types.VARCHAR);
+        row.put("TYPE_NAME", "NVARCHAR");
+        row.put("COLUMN_SIZE", 64);
+        row.put("DECIMAL_DIGITS", 0);
+        row.put("NULLABLE", DatabaseMetaData.columnNoNulls);
+        row.put("REMARKS", null);
+
+        DatabaseMetaData metaData = proxy(DatabaseMetaData.class, (proxy, method, args) -> {
+            if ("getDatabaseProductName".equals(method.getName())) {
+                return "Microsoft SQL Server";
+            }
+            if ("getColumns".equals(method.getName())) {
+                return metadataResultSet(Collections.singletonList(row));
+            }
+            return defaultValue(method.getReturnType());
+        });
+
+        assertEquals("old comment", creator.exposeColumnRemark(metaData,
+                Tables.get(CommentModifyUserV2.class), "catalog", "dbo", "auto_comment_modify_user", "username"));
+        assertEquals(1, creator.remarkReadCount);
+    }
+
+    @Test
     void syncModeShouldIgnoreConstraintIndexesWhenDroppingExtraIndexes() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
         TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class);
@@ -1483,6 +1529,19 @@ class DDLAutoCoverageTest {
             return createDropIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
         }
 
+        List<String> exposeCommentModifySqlList(IDbType dbType, Class<?> entityClass, String tableName, String existingComment) {
+            TableInfo tableInfo = Tables.get(entityClass);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, tableName);
+            databaseMetadata.addPrimaryKey("catalog", null, tableName, "PRIMARY", "id");
+            String typeName = dbType == DbType.SQL_SERVER ? "NVARCHAR" : "VARCHAR";
+            databaseMetadata.addColumn("catalog", null, tableName, "id", Types.BIGINT, "BIGINT", 0, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, tableName, "username", Types.VARCHAR, typeName, 64, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, existingComment);
+            return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
         boolean exposeDatabaseMetadataSchemaCatalogFallback(TableInfo tableInfo) {
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
             databaseMetadata.addTable(tableInfo.getSchema(), null, tableInfo.getTableName());
@@ -1571,6 +1630,37 @@ class DDLAutoCoverageTest {
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
             databaseMetadata.addTable("catalog", null, tableInfo.getTableName(), "VIEW");
             return databaseMetadata.objectType(tableInfo);
+        }
+    }
+
+    static class CommentModifyExecutor extends ExposedMetadataExecutor {
+    }
+
+    static class SqlServerRemarkExecutor extends ExposedMetadataExecutor {
+
+        private final Map<String, String> columnRemarks;
+
+        private int remarkReadCount;
+
+        SqlServerRemarkExecutor(Map<String, String> columnRemarks) {
+            this.columnRemarks = columnRemarks;
+        }
+
+        String exposeColumnRemark(DatabaseMetaData metaData, TableInfo tableInfo, String catalog, String schema, String tableName, String columnName) throws SQLException {
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata(catalog, schema);
+            readColumnMetadata(metaData, catalog, schema, tableName, databaseMetadata);
+            ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, columnName);
+            return columnMetadata == null ? null : columnMetadata.getRemarks();
+        }
+
+        @Override
+        protected Map<String, String> readSqlServerColumnRemarks(DatabaseMetaData metaData, String schema, String tableName) {
+            remarkReadCount++;
+            Map<String, String> normalizedColumnRemarks = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : columnRemarks.entrySet()) {
+                normalizedColumnRemarks.put(normalize(entry.getKey()), entry.getValue());
+            }
+            return normalizedColumnRemarks;
         }
     }
 
@@ -1866,6 +1956,28 @@ class DDLAutoCoverageTest {
         return proxy(ResultSet.class, (proxy, method, args) -> {
             if ("getString".equals(method.getName())) {
                 throw new SQLException("column missing");
+            }
+            return defaultValue(method.getReturnType());
+        });
+    }
+
+    private static ResultSet metadataResultSet(List<Map<String, Object>> rows) {
+        final int[] index = {-1};
+        return proxy(ResultSet.class, (proxy, method, args) -> {
+            if ("next".equals(method.getName())) {
+                index[0]++;
+                return index[0] < rows.size();
+            }
+            if ("getString".equals(method.getName())) {
+                Object value = rows.get(index[0]).get((String) args[0]);
+                return value == null ? null : String.valueOf(value);
+            }
+            if ("getInt".equals(method.getName())) {
+                Object value = rows.get(index[0]).get((String) args[0]);
+                if (value instanceof Number) {
+                    return ((Number) value).intValue();
+                }
+                return value == null ? 0 : Integer.parseInt(String.valueOf(value));
             }
             return defaultValue(method.getReturnType());
         });
@@ -2246,6 +2358,16 @@ class DDLAutoCoverageTest {
         private BigDecimal balance;
 
         private Long age;
+    }
+
+    @Table("auto_comment_modify_user")
+    static class CommentModifyUserV2 {
+
+        @TableId
+        private Long id;
+
+        @ColumnDefinition(length = 64, nullable = false, comment = "new comment")
+        private String username;
     }
 
     @Table("auto_long_unique_name_user_with_an_extra_long_name")

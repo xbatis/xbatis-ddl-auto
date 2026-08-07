@@ -290,6 +290,20 @@ class DDLAutoKingbaseIntegrationTest extends DDLAutoExternalDatabaseIntegrationS
         }
     }
 
+    @Test
+    void kingbaseShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyCommentFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    SyncModifyCommentUserV1.class,
+                    SyncModifyCommentUserV2.class,
+                    "auto_sync_modify_comment_user",
+                    "COMMENT ON COLUMN auto_sync_modify_comment_user.username IS 'new comment';"
+            );
+        }
+    }
+
     static class JdbcUrlParts {
 
         private final String prefix;

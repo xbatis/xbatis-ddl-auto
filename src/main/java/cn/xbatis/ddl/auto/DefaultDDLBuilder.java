@@ -148,6 +148,16 @@ public class DefaultDDLBuilder implements DDLBuilder {
     }
 
     @Override
+    public List<String> columnCommentSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns) {
+        return buildColumnCommentSqlList(dbType, tableInfo, columns, tableInfo.getTableName());
+    }
+
+    @Override
+    public List<String> columnCommentSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        return buildColumnCommentSqlList(dbType, tableInfo, columns, tableName);
+    }
+
+    @Override
     public String createTableSql(IDbType dbType, Class<?> entityClass) {
         return buildCreateTableSql(dbType, entityClass);
     }
@@ -1642,7 +1652,14 @@ public class DefaultDDLBuilder implements DDLBuilder {
      * 生成字段注释 SQL。
      */
     protected List<String> buildColumnCommentSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> columns) {
-        return buildColumnCommentSqlList(new DDLContext(dbType, null, tableInfo, columns));
+        return buildColumnCommentSqlList(dbType, tableInfo, columns, tableInfo.getTableName());
+    }
+
+    /**
+     * 生成字段注释 SQL。
+     */
+    protected List<String> buildColumnCommentSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        return buildColumnCommentSqlList(createContext(dbType, tableInfo, new ArrayList<>(columns), tableName));
     }
 
     /**
@@ -1666,7 +1683,14 @@ public class DefaultDDLBuilder implements DDLBuilder {
      * 生成单个字段注释 SQL。
      */
     protected String buildColumnCommentSql(IDbType dbType, TableInfo tableInfo, ColumnInfo column) {
-        return buildColumnCommentSql(new DDLContext(dbType, null, tableInfo, Collections.singletonList(column)), column);
+        return buildColumnCommentSql(dbType, tableInfo, column, tableInfo.getTableName());
+    }
+
+    /**
+     * 生成单个字段注释 SQL。
+     */
+    protected String buildColumnCommentSql(IDbType dbType, TableInfo tableInfo, ColumnInfo column, String tableName) {
+        return buildColumnCommentSql(createContext(dbType, tableInfo, Collections.singletonList(column), tableName), column);
     }
 
     /**

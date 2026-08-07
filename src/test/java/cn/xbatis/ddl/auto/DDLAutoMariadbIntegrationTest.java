@@ -140,6 +140,17 @@ class DDLAutoMariadbIntegrationTest extends DDLAutoExternalDatabaseIntegrationSu
         );
     }
 
+    @Test
+    void mariadbShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        assertSyncModifyCommentFlow(
+                DATABASE,
+                SyncModifyCommentUserV1.class,
+                SyncModifyCommentUserV2.class,
+                "auto_sync_modify_comment_user",
+                "ALTER TABLE auto_sync_modify_comment_user MODIFY COLUMN username VARCHAR(64) NOT NULL COMMENT 'new comment';"
+        );
+    }
+
     @Table("auto_mariadb_itg_user")
     @Index(name = "idx_mdb_itg_user_name", fields = @IndexField(name = "username"))
     static class MariadbIntegrationUserV1 {

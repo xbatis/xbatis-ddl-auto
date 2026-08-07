@@ -183,6 +183,20 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
         }
     }
 
+    @Test
+    void gaussShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyCommentFlow(
+                    DbType.GAUSS,
+                    connection,
+                    SyncModifyCommentUserV1.class,
+                    SyncModifyCommentUserV2.class,
+                    "auto_sync_modify_comment_user",
+                    "COMMENT ON COLUMN auto_sync_modify_comment_user.username IS 'new comment';"
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             Class.forName(GAUSS_DRIVER);

@@ -140,6 +140,17 @@ class DDLAutoOceanbaseIntegrationTest extends DDLAutoExternalDatabaseIntegration
         );
     }
 
+    @Test
+    void oceanbaseShouldModifyChangedColumnCommentInSyncMode() throws Exception {
+        assertSyncModifyCommentFlow(
+                DATABASE,
+                SyncModifyCommentUserV1.class,
+                SyncModifyCommentUserV2.class,
+                "auto_sync_modify_comment_user",
+                "ALTER TABLE auto_sync_modify_comment_user MODIFY COLUMN username VARCHAR(64) NOT NULL COMMENT 'new comment';"
+        );
+    }
+
     @Table("auto_ob_itg_user")
     @Index(name = "idx_ob_itg_user_name", fields = @IndexField(name = "username"))
     static class OceanbaseIntegrationUserV1 {
