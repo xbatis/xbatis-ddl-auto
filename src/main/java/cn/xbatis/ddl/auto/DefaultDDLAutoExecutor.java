@@ -1,15 +1,22 @@
 package cn.xbatis.ddl.auto;
 
+import cn.xbatis.core.mybatis.typeHandler.EnumSupport;
 import cn.xbatis.core.db.reflect.TableInfo;
 import cn.xbatis.core.db.reflect.Tables;
+import cn.xbatis.db.IdAutoType;
+import cn.xbatis.db.annotations.ColumnDefinition;
 import db.sql.api.DbType;
 import db.sql.api.IDbType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * 默认自动建表执行器。
@@ -45,6 +52,12 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     private final DDLExecutionListener executionListener;
 
     private final MetadataNameMatcher metadataNameMatcher = new MetadataNameMatcher();
+
+    private final DDLDialect dialect = new DDLDialect();
+
+    private final ColumnTypeMapper columnTypeMapper = new ColumnTypeMapper(dialect);
+
+    private final ConcurrentMap<Class<?>, Optional<Class<?>>> enumSupportCodeTypeCache = new ConcurrentHashMap<>();
 
     private final List<String> executedSqlList = new ArrayList<>();
 
@@ -406,6 +419,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 if (mode == Mode.SYNC) {
                     sqlList.addAll(createDropIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                     sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                    sqlList.addAll(createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                 }
                 sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                 sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
@@ -979,7 +993,15 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                         getString(resultSet, "TABLE_CAT"),
                         getString(resultSet, "TABLE_SCHEM"),
                         getString(resultSet, "TABLE_NAME"),
-                        getString(resultSet, "COLUMN_NAME")
+                        getString(resultSet, "COLUMN_NAME"),
+                        getInt(resultSet, "DATA_TYPE"),
+                        getString(resultSet, "TYPE_NAME"),
+                        getInt(resultSet, "COLUMN_SIZE"),
+                        getInt(resultSet, "DECIMAL_DIGITS"),
+                        getInt(resultSet, "NULLABLE"),
+                        getString(resultSet, "COLUMN_DEF"),
+                        getString(resultSet, "IS_AUTOINCREMENT"),
+                        getString(resultSet, "IS_GENERATEDCOLUMN")
                 );
             }
         }
@@ -1408,6 +1430,295 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             missingColumnNames.set(i, normalize(missingColumnNames.get(i)));
         }
         return ddlBuilder.dropColumnSqlList(dbType, tableInfo, missingColumnNames, tableName);
+    }
+
+    /**
+     * 为数据库中定义发生变化的实体字段生成 MODIFY COLUMN SQL。
+     */
+    protected List<String> createModifyColumnSqlList(IDbType dbType, TableInfo tableInfo, DatabaseMetadata databaseMetadata) {
+        return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableInfo.getTableName(), databaseMetadata);
+    }
+
+    /**
+     * 为指定物理表中定义发生变化的实体字段生成 MODIFY COLUMN SQL。
+     */
+    protected List<String> createModifyColumnSqlList(IDbType dbType, EntityDDLMetadata entityMetadata, String tableName, DatabaseMetadata databaseMetadata) {
+        TableInfo tableInfo = entityMetadata.getTableInfo();
+        List<ColumnInfo> columns = entityMetadata.getColumns();
+        if (columns.isEmpty() || databaseMetadata == null || !dialect.supportsModifyColumn(dbType)) {
+            return Collections.emptyList();
+        }
+        MetadataNameIndex primaryKeyColumnNameIndex = metadataNameIndex(databaseMetadata.getPrimaryKeyColumnNames(tableInfo, tableName));
+        List<ColumnInfo> modifiedColumns = new ArrayList<>();
+        for (ColumnInfo column : columns) {
+            if (primaryKeyColumnNameIndex.contains(column.getName())) {
+                continue;
+            }
+            ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, column.getName());
+            if (columnMetadata == null) {
+                continue;
+            }
+            if (columnTypeChanged(dbType, column, columnMetadata)) {
+                modifiedColumns.add(column);
+            }
+        }
+        if (modifiedColumns.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> sqlList = ddlBuilder.modifyColumnSqlList(dbType, tableInfo, modifiedColumns, tableName);
+        if (databaseMetadata != null) {
+            databaseMetadata.addColumns(tableInfo, tableName, modifiedColumns);
+        }
+        return sqlList;
+    }
+
+    /**
+     * 判断列的类型定义是否发生变化。
+     */
+    protected boolean columnTypeChanged(IDbType dbType, ColumnInfo column, ColumnMetadata columnMetadata) {
+        String expectedType = normalizeColumnTypeSignature(dbType, buildExpectedColumnTypeSignature(dbType, column));
+        String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
+        return !expectedType.equals(actualType);
+    }
+
+    /**
+     * 生成实体列对应的预期类型签名。
+     */
+    protected String buildExpectedColumnTypeSignature(IDbType dbType, ColumnInfo column) {
+        ColumnDefinition columnDefinition = column.getDefinition();
+        if (!isBlank(columnDefinition.definition())) {
+            return buildColumnDefinitionType(columnDefinition);
+        }
+        Class<?> type = column.getJavaType();
+        if (type.isEnum()) {
+            Class<?> enumCodeType = getEnumSupportCodeType(type);
+            if (enumCodeType != null) {
+                return columnTypeMapper.getColumnType(dbType, enumCodeType, columnDefinition, false);
+            }
+            return columnTypeMapper.getStringType(dbType, columnDefinition.length() > 0 ? columnDefinition.length() : 64);
+        }
+        boolean autoIncrement = column.isId() && column.getIdAutoType() == IdAutoType.AUTO;
+        return columnTypeMapper.getColumnType(dbType, type, columnDefinition, autoIncrement);
+    }
+
+    /**
+     * 获取 xbatis 枚举列的 code 类型。
+     */
+    protected Class<?> getEnumSupportCodeType(Class<?> enumType) {
+        Optional<Class<?>> cachedCodeType = enumSupportCodeTypeCache.get(enumType);
+        if (cachedCodeType != null) {
+            return cachedCodeType.orElse(null);
+        }
+        Class<?> codeType = resolveEnumSupportCodeType(enumType);
+        Optional<Class<?>> cachedValue = Optional.ofNullable(codeType);
+        Optional<Class<?>> existingValue = enumSupportCodeTypeCache.putIfAbsent(enumType, cachedValue);
+        return (existingValue == null ? cachedValue : existingValue).orElse(null);
+    }
+
+    private Class<?> resolveEnumSupportCodeType(Class<?> enumType) {
+        for (Type genericInterface : enumType.getGenericInterfaces()) {
+            Class<?> codeType = getEnumSupportCodeType(genericInterface);
+            if (codeType != null) {
+                return codeType;
+            }
+        }
+        return null;
+    }
+
+    private Class<?> getEnumSupportCodeType(Type type) {
+        if (type instanceof Class) {
+            Class<?> rawClass = (Class<?>) type;
+            for (Type genericInterface : rawClass.getGenericInterfaces()) {
+                Class<?> codeType = getEnumSupportCodeType(genericInterface);
+                if (codeType != null) {
+                    return codeType;
+                }
+            }
+            return null;
+        }
+        if (type instanceof ParameterizedType) {
+            ParameterizedType parameterizedType = (ParameterizedType) type;
+            Type rawType = parameterizedType.getRawType();
+            if (rawType instanceof Class && EnumSupport.class.isAssignableFrom((Class<?>) rawType)) {
+                Type codeType = parameterizedType.getActualTypeArguments()[0];
+                return codeType instanceof Class ? (Class<?>) codeType : null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 生成数据库列对应的实际类型签名。
+     */
+    protected String buildActualColumnTypeSignature(IDbType dbType, ColumnMetadata columnMetadata) {
+        if (columnMetadata == null) {
+            return "";
+        }
+        String typeName = normalizeMetadataTypeName(columnMetadata.getTypeName());
+        if (isBlank(typeName)) {
+            return "";
+        }
+        StringBuilder signature = new StringBuilder(typeName);
+        if (isPrecisionScaleType(typeName)) {
+            int precision = columnMetadata.getColumnSize();
+            if (precision > 0) {
+                signature.append("(").append(precision);
+                int scale = columnMetadata.getDecimalDigits();
+                if (scale > 0) {
+                    signature.append(",").append(scale);
+                }
+                signature.append(")");
+            }
+            return signature.toString();
+        }
+        if (isLengthType(typeName)) {
+            int size = columnMetadata.getColumnSize();
+            if (size > 0 && !typeName.endsWith("(MAX)")) {
+                signature.append("(").append(size).append(")");
+            }
+        }
+        if (dialect.isMysql(dbType) && "TINYINT".equals(typeName) && columnMetadata.getColumnSize() == 1) {
+            return "TINYINT(1)";
+        }
+        return signature.toString();
+    }
+
+    /**
+     * 统一实体和数据库列类型签名，便于比较。
+     */
+    protected String normalizeColumnTypeSignature(IDbType dbType, String typeSignature) {
+        if (isBlank(typeSignature)) {
+            return "";
+        }
+        String normalized = typeSignature.trim().toUpperCase(Locale.ROOT)
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\s*\\(\\s*", "(")
+                .replaceAll("\\s*,\\s*", ",")
+                .replaceAll("\\s*\\)\\s*", ")");
+        if (normalized.startsWith("CHARACTER LARGE OBJECT")) {
+            normalized = "CLOB" + normalized.substring("CHARACTER LARGE OBJECT".length());
+        } else if (normalized.startsWith("NATIONAL CHARACTER VARYING")) {
+            normalized = "NVARCHAR" + normalized.substring("NATIONAL CHARACTER VARYING".length());
+        } else if (normalized.startsWith("CHARACTER VARYING")) {
+            normalized = "VARCHAR" + normalized.substring("CHARACTER VARYING".length());
+        } else if (normalized.startsWith("NATIONAL CHARACTER")) {
+            normalized = "NCHAR" + normalized.substring("NATIONAL CHARACTER".length());
+        } else if (normalized.startsWith("CHARACTER")) {
+            normalized = "CHAR" + normalized.substring("CHARACTER".length());
+        } else if (normalized.startsWith("NUMERIC")) {
+            normalized = (dialect.isOracle(dbType) ? "NUMBER" : "DECIMAL") + normalized.substring("NUMERIC".length());
+        } else if (normalized.startsWith("DECIMAL")) {
+            normalized = (dialect.isOracle(dbType) ? "NUMBER" : "DECIMAL") + normalized.substring("DECIMAL".length());
+        } else if (normalized.startsWith("INT8")) {
+            normalized = "BIGINT" + normalized.substring("INT8".length());
+        } else if (normalized.startsWith("BIGSERIAL")) {
+            normalized = "BIGINT" + normalized.substring("BIGSERIAL".length());
+        } else if (normalized.startsWith("INT4")) {
+            normalized = "INTEGER" + normalized.substring("INT4".length());
+        } else if (normalized.startsWith("SERIAL")) {
+            normalized = "INTEGER" + normalized.substring("SERIAL".length());
+        } else if (normalized.startsWith("INT2")) {
+            normalized = "SMALLINT" + normalized.substring("INT2".length());
+        } else if (normalized.startsWith("BOOL")) {
+            normalized = "BOOLEAN" + normalized.substring("BOOL".length());
+        } else if (normalized.startsWith("TIMESTAMP WITHOUT TIME ZONE")) {
+            normalized = "TIMESTAMP" + normalized.substring("TIMESTAMP WITHOUT TIME ZONE".length());
+        } else if (normalized.startsWith("TIMESTAMP WITH TIME ZONE")) {
+            normalized = "TIMESTAMP WITH TIME ZONE" + normalized.substring("TIMESTAMP WITH TIME ZONE".length());
+        }
+        return normalized;
+    }
+
+    /**
+     * 统一数据库类型名格式。
+     */
+    protected String normalizeMetadataTypeName(String typeName) {
+        if (isBlank(typeName)) {
+            return "";
+        }
+        String normalized = typeName.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
+        if (normalized.startsWith("CHARACTER LARGE OBJECT")) {
+            return "CLOB";
+        }
+        if (normalized.startsWith("NATIONAL CHARACTER VARYING")) {
+            return "NVARCHAR";
+        }
+        if (normalized.startsWith("CHARACTER VARYING")) {
+            return "VARCHAR";
+        }
+        if (normalized.startsWith("NATIONAL CHARACTER")) {
+            return "NCHAR";
+        }
+        if (normalized.startsWith("CHARACTER")) {
+            return "CHAR";
+        }
+        if (normalized.startsWith("INT8")) {
+            return "BIGINT";
+        }
+        if (normalized.startsWith("BIGSERIAL")) {
+            return "BIGINT";
+        }
+        if (normalized.startsWith("INT4")) {
+            return "INTEGER";
+        }
+        if (normalized.startsWith("SERIAL")) {
+            return "INTEGER";
+        }
+        if (normalized.startsWith("INT2")) {
+            return "SMALLINT";
+        }
+        if (normalized.startsWith("BOOL")) {
+            return "BOOLEAN";
+        }
+        if (normalized.startsWith("TIMESTAMP WITHOUT TIME ZONE")) {
+            return "TIMESTAMP";
+        }
+        return normalized;
+    }
+
+    /**
+     * 判断类型是否为需要长度的字符/二进制类型。
+     */
+    protected boolean isLengthType(String typeName) {
+        String normalized = typeName == null ? "" : typeName.toUpperCase(Locale.ROOT);
+        return normalized.startsWith("CHAR")
+                || normalized.startsWith("NCHAR")
+                || normalized.startsWith("VARCHAR")
+                || normalized.startsWith("NVARCHAR")
+                || normalized.startsWith("VARBINARY")
+                || normalized.startsWith("BINARY")
+                || normalized.startsWith("LONGVARCHAR")
+                || normalized.startsWith("LONGVARBINARY");
+    }
+
+    /**
+     * 判断类型是否为需要精度/小数位的数值类型。
+     */
+    protected boolean isPrecisionScaleType(String typeName) {
+        String normalized = typeName == null ? "" : typeName.toUpperCase(Locale.ROOT);
+        return normalized.startsWith("DECIMAL")
+                || normalized.startsWith("NUMBER")
+                || normalized.startsWith("NUMERIC");
+    }
+
+    /**
+     * 构建列定义中的类型片段。
+     */
+    protected String buildColumnDefinitionType(ColumnDefinition columnDefinition) {
+        String definition = columnDefinition.definition();
+        if (definition.indexOf('(') >= 0) {
+            return definition;
+        }
+        if (columnDefinition.precision() > 0) {
+            if (columnDefinition.scale() > 0) {
+                return definition + "(" + columnDefinition.precision() + "," + columnDefinition.scale() + ")";
+            }
+            return definition + "(" + columnDefinition.precision() + ")";
+        }
+        if (columnDefinition.length() > 0) {
+            return definition + "(" + columnDefinition.length() + ")";
+        }
+        return definition;
     }
 
     /**
@@ -1893,11 +2204,73 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final String columnName;
 
-        ColumnMetadata(String catalog, String schema, String tableName, String columnName) {
+        private final int dataType;
+
+        private final String typeName;
+
+        private final int columnSize;
+
+        private final int decimalDigits;
+
+        private final int nullable;
+
+        private final String columnDefault;
+
+        private final String isAutoIncrement;
+
+        private final String isGeneratedColumn;
+
+        ColumnMetadata(String catalog, String schema, String tableName, String columnName,
+                       int dataType, String typeName, int columnSize, int decimalDigits, int nullable,
+                       String columnDefault, String isAutoIncrement, String isGeneratedColumn) {
             this.catalog = catalog;
             this.schema = schema;
             this.tableName = tableName;
             this.columnName = columnName;
+            this.dataType = dataType;
+            this.typeName = typeName;
+            this.columnSize = columnSize;
+            this.decimalDigits = decimalDigits;
+            this.nullable = nullable;
+            this.columnDefault = columnDefault;
+            this.isAutoIncrement = isAutoIncrement;
+            this.isGeneratedColumn = isGeneratedColumn;
+        }
+
+        String getColumnName() {
+            return columnName;
+        }
+
+        int getDataType() {
+            return dataType;
+        }
+
+        String getTypeName() {
+            return typeName;
+        }
+
+        int getColumnSize() {
+            return columnSize;
+        }
+
+        int getDecimalDigits() {
+            return decimalDigits;
+        }
+
+        int getNullable() {
+            return nullable;
+        }
+
+        String getColumnDefault() {
+            return columnDefault;
+        }
+
+        String getIsAutoIncrement() {
+            return isAutoIncrement;
+        }
+
+        String getIsGeneratedColumn() {
+            return isGeneratedColumn;
         }
     }
 
@@ -1974,7 +2347,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
 
         void addColumn(String catalog, String schema, String tableName, String columnName) {
-            put(columnsByTableName, metadataLookupKey(tableName), new ColumnMetadata(catalog, schema, tableName, columnName));
+            addColumn(catalog, schema, tableName, columnName, -1, null, 0, 0, DatabaseMetaData.columnNullableUnknown, null, null, null);
+        }
+
+        void addColumn(String catalog, String schema, String tableName, String columnName, int dataType, String typeName,
+                       int columnSize, int decimalDigits, int nullable, String columnDefault, String isAutoIncrement, String isGeneratedColumn) {
+            put(columnsByTableName, metadataLookupKey(tableName), new ColumnMetadata(catalog, schema, tableName, columnName,
+                    dataType, typeName, columnSize, decimalDigits, nullable, columnDefault, isAutoIncrement, isGeneratedColumn));
         }
 
         void addIndexes(TableInfo tableInfo, Collection<IndexInfo> addIndexes) {
@@ -2087,6 +2466,20 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 }
             }
             return columnNames;
+        }
+
+        ColumnMetadata getColumnMetadata(TableInfo tableInfo, String tableName, String columnName) {
+            List<ColumnMetadata> columns = columnsByTableName.get(metadataLookupKey(tableName));
+            if (columns == null) {
+                return null;
+            }
+            for (ColumnMetadata column : columns) {
+                if (matches(tableInfo, tableName, column.catalog, column.schema, column.tableName)
+                        && metadataNameMatcher.matchesMetadataName(columnName, column.columnName)) {
+                    return column;
+                }
+            }
+            return null;
         }
 
         Set<String> getIndexNames(TableInfo tableInfo) {
@@ -2279,6 +2672,17 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return resultSet.getString(columnLabel);
         } catch (SQLException ignored) {
             return null;
+        }
+    }
+
+    /**
+     * 从 JDBC 元数据中读取整数字段，兼容部分驱动缺失字段的情况。
+     */
+    protected int getInt(ResultSet resultSet, String columnLabel) throws SQLException {
+        try {
+            return resultSet.getInt(columnLabel);
+        } catch (SQLException ignored) {
+            return 0;
         }
     }
 

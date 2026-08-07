@@ -113,6 +113,33 @@ class DDLAutoOceanbaseIntegrationTest extends DDLAutoExternalDatabaseIntegration
         );
     }
 
+    @Test
+    void oceanbaseShouldModifyChangedColumnsInSyncMode() throws Exception {
+        assertSyncModifyFlow(
+                DATABASE,
+                SyncModifyUserV1.class,
+                SyncModifyUserV2.class,
+                "auto_sync_modify_user",
+                "ALTER TABLE auto_sync_modify_user MODIFY COLUMN username VARCHAR(128);"
+        );
+    }
+
+    @Test
+    void oceanbaseShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        assertSyncModifyBatchFlow(
+                DATABASE,
+                SyncModifyBatchUserV1.class,
+                SyncModifyBatchUserV2.class,
+                "auto_sync_modify_batch_user",
+                "ALTER TABLE auto_sync_modify_batch_user MODIFY COLUMN username VARCHAR(128), MODIFY COLUMN balance DECIMAL(18,4);",
+                64,
+                128,
+                12,
+                18,
+                4
+        );
+    }
+
     @Table("auto_ob_itg_user")
     @Index(name = "idx_ob_itg_user_name", fields = @IndexField(name = "username"))
     static class OceanbaseIntegrationUserV1 {

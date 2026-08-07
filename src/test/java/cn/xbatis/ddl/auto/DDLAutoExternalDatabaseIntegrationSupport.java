@@ -5,9 +5,11 @@ import cn.xbatis.db.annotations.*;
 import db.sql.api.DbType;
 import db.sql.api.IDbType;
 
+import java.math.BigDecimal;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -35,6 +37,8 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
     private static final String DATE_DEFAULT_TABLE = "auto_date_default_user";
 
     private static final String DATE_TIME_DEFAULT_TABLE = "auto_datetime_default_user";
+
+    private static final String SYNC_MODIFY_TABLE = "auto_sync_modify_user";
 
     static void assertCreateUpdateFlow(DatabaseCase databaseCase,
                                        Class<?> v1Entity,
@@ -157,6 +161,122 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
             assertTrue(indexExists(connection, tableName, "idx_sync_email"));
             assertFalse(indexExists(connection, tableName, "idx_sync_legacy_code"));
             assertTrue(primaryKeyExists(connection, tableName, "id"));
+        } finally {
+            dropTestTable(connection, tableName);
+        }
+    }
+
+    static void assertSyncModifyFlow(DatabaseCase databaseCase,
+                                     Class<?> v1Entity,
+                                     Class<?> v2Entity,
+                                     String tableName,
+                                     String expectedModifySql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyFlow(databaseCase.dbType, connection, v1Entity, v2Entity, tableName, expectedModifySql);
+        }
+    }
+
+    static void assertSyncModifyFlow(IDbType dbType,
+                                     Connection connection,
+                                     Class<?> v1Entity,
+                                     Class<?> v2Entity,
+                                     String tableName,
+                                     String expectedModifySql) throws Exception {
+        dropTestTable(connection, tableName);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(v1Entity)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, tableName));
+            assertTrue(columnExists(connection, tableName, "id"));
+            assertTrue(columnExists(connection, tableName, "username"));
+            assertEquals(Integer.valueOf(64), columnSize(connection, tableName, "username"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+
+            assertEquals(Collections.singletonList(expectedModifySql), syncExecutedSqlList);
+            assertEquals(Integer.valueOf(128), columnSize(connection, tableName, "username"));
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync modify flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, tableName);
+        }
+    }
+
+    static void assertSyncModifyBatchFlow(DatabaseCase databaseCase,
+                                          Class<?> v1Entity,
+                                          Class<?> v2Entity,
+                                          String tableName,
+                                          String expectedModifySql,
+                                          int beforeUsernameSize,
+                                          int afterUsernameSize,
+                                          int beforeBalancePrecision,
+                                          int afterBalancePrecision,
+                                          int afterBalanceScale) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyBatchFlow(databaseCase.dbType, connection, v1Entity, v2Entity, tableName,
+                    expectedModifySql, beforeUsernameSize, afterUsernameSize, beforeBalancePrecision, afterBalancePrecision,
+                    afterBalanceScale);
+        }
+    }
+
+    static void assertSyncModifyBatchFlow(IDbType dbType,
+                                          Connection connection,
+                                          Class<?> v1Entity,
+                                          Class<?> v2Entity,
+                                          String tableName,
+                                          String expectedModifySql,
+                                          int beforeUsernameSize,
+                                          int afterUsernameSize,
+                                          int beforeBalancePrecision,
+                                          int afterBalancePrecision,
+                                          int afterBalanceScale) throws Exception {
+        dropTestTable(connection, tableName);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(v1Entity)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, tableName));
+            assertEquals(Integer.valueOf(beforeUsernameSize), columnSize(connection, tableName, "username"));
+            assertEquals(Integer.valueOf(beforeBalancePrecision), columnSize(connection, tableName, "balance"));
+            assertEquals(Integer.valueOf(2), columnDecimalDigits(connection, tableName, "balance"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+
+            assertEquals(Arrays.asList(expectedModifySql.split(";")).stream().map(i->i+";").collect(Collectors.toList()), syncExecutedSqlList);
+            assertEquals(Integer.valueOf(afterUsernameSize), columnSize(connection, tableName, "username"));
+            assertEquals(Integer.valueOf(afterBalancePrecision), columnSize(connection, tableName, "balance"));
+            assertEquals(Integer.valueOf(afterBalanceScale), columnDecimalDigits(connection, tableName, "balance"));
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync batch modify flow already executed: " + verifyExecutedSqlList);
         } finally {
             dropTestTable(connection, tableName);
         }
@@ -778,6 +898,38 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         return false;
     }
 
+    static Integer columnSize(Connection connection, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metadata = connection.getMetaData();
+        for (MetadataScope scope : metadataScopes(connection)) {
+            for (String tableCandidate : nameCandidates(tableName)) {
+                for (String columnCandidate : nameCandidates(columnName)) {
+                    try (ResultSet resultSet = metadata.getColumns(scope.catalog, scope.schema, tableCandidate, columnCandidate)) {
+                        if (resultSet.next()) {
+                            return resultSet.getInt("COLUMN_SIZE");
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    static Integer columnDecimalDigits(Connection connection, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metadata = connection.getMetaData();
+        for (MetadataScope scope : metadataScopes(connection)) {
+            for (String tableCandidate : nameCandidates(tableName)) {
+                for (String columnCandidate : nameCandidates(columnName)) {
+                    try (ResultSet resultSet = metadata.getColumns(scope.catalog, scope.schema, tableCandidate, columnCandidate)) {
+                        if (resultSet.next()) {
+                            return resultSet.getInt("DECIMAL_DIGITS");
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     static boolean primaryKeyExists(Connection connection, String tableName, String columnName) throws SQLException {
         DatabaseMetaData metadata = connection.getMetaData();
         for (MetadataScope scope : metadataScopes(connection)) {
@@ -1148,6 +1300,52 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @ColumnDefinition(length = 128)
         private String email;
+    }
+
+    @Table(SYNC_MODIFY_TABLE)
+    static class SyncModifyUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_TABLE)
+    static class SyncModifyUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 128)
+        private String username;
+    }
+
+    @Table("auto_sync_modify_batch_user")
+    static class SyncModifyBatchUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+
+        @ColumnDefinition(precision = 12, scale = 2)
+        private BigDecimal balance;
+    }
+
+    @Table("auto_sync_modify_batch_user")
+    static class SyncModifyBatchUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 128)
+        private String username;
+
+        @ColumnDefinition(precision = 18, scale = 4)
+        private BigDecimal balance;
     }
 
     private static class MetadataScope {

@@ -150,6 +150,39 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
         }
     }
 
+    @Test
+    void gaussShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyFlow(
+                    DbType.GAUSS,
+                    connection,
+                    SyncModifyUserV1.class,
+                    SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user ALTER COLUMN username TYPE VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void gaussShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyBatchFlow(
+                    DbType.GAUSS,
+                    connection,
+                    SyncModifyBatchUserV1.class,
+                    SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user ALTER COLUMN username TYPE VARCHAR(128), ALTER COLUMN balance TYPE DECIMAL(18,4);",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             Class.forName(GAUSS_DRIVER);

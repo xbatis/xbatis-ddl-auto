@@ -259,6 +259,39 @@ class DDLAutoDb2IntegrationTest {
     }
 
     @Test
+    void db2ShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyFlow(
+                    DbType.DB2,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user ALTER COLUMN username SET DATA TYPE VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void db2ShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(
+                    DbType.DB2,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user ALTER COLUMN username SET DATA TYPE VARCHAR(128) ALTER COLUMN balance SET DATA TYPE DECIMAL(18,4);",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
+    @Test
     void db2ShouldSyncAndDeleteMissingColumnsAndIndexes() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncFlow(

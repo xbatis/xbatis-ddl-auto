@@ -224,6 +224,16 @@ public class DDLDialect {
         return !isSqlite(dbType);
     }
 
+    public boolean supportsModifyColumn(IDbType dbType) {
+        validateDbType(dbType);
+        return dbType != DbType.CLICK_HOUSE && !isSqlite(dbType);
+    }
+
+    public boolean supportsMultipleModifyColumns(IDbType dbType) {
+        validateDbType(dbType);
+        return isMysql(dbType) || isPostgresql(dbType) || isOracle(dbType) || dbType == DbType.DB2;
+    }
+
     public boolean supportsUniqueConstraint(IDbType dbType) {
         validateDbType(dbType);
         return dbType != DbType.CLICK_HOUSE;

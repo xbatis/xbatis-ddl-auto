@@ -197,6 +197,39 @@ class DDLAutoMysqlIntegrationTest {
         }
     }
 
+    @Test
+    void mysqlShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyFlow(
+                    DbType.MYSQL,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user MODIFY COLUMN username VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void mysqlShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(
+                    DbType.MYSQL,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user MODIFY COLUMN username VARCHAR(128), MODIFY COLUMN balance DECIMAL(18,4);",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             return DriverManager.getConnection(databaseUrl(), MYSQL_USERNAME, MYSQL_PASSWORD);

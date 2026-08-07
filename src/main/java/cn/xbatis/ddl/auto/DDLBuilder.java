@@ -119,6 +119,33 @@ public interface DDLBuilder {
     }
 
     /**
+     * 为指定物理表批量生成修改字段 SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columns     需要修改的列元数据集合
+     * @return 修改字段 SQL 列表
+     */
+    default List<String> modifyColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns) {
+        Objects.requireNonNull(tableInfo, "tableInfo");
+        return Collections.emptyList();
+    }
+
+    /**
+     * 为指定物理表批量生成修改字段 SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columns     需要修改的列元数据集合
+     * @param tableName   物理表名
+     * @return 修改字段 SQL 列表
+     */
+    default List<String> modifyColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        Objects.requireNonNull(tableName, "tableName");
+        return modifyColumnSqlList(dbType, tableInfo, columns);
+    }
+
+    /**
      * 获取实体对应的数据库列元数据。
      *
      * @param dbType      数据库类型

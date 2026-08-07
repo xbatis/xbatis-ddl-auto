@@ -257,6 +257,39 @@ class DDLAutoKingbaseIntegrationTest extends DDLAutoExternalDatabaseIntegrationS
         }
     }
 
+    @Test
+    void kingbaseShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    SyncModifyUserV1.class,
+                    SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user ALTER COLUMN username TYPE VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void kingbaseShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyBatchFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    SyncModifyBatchUserV1.class,
+                    SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user ALTER COLUMN username TYPE VARCHAR(128), ALTER COLUMN balance TYPE DECIMAL(18,4);",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
     static class JdbcUrlParts {
 
         private final String prefix;

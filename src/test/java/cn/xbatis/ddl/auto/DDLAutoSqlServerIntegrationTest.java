@@ -197,6 +197,39 @@ class DDLAutoSqlServerIntegrationTest {
         }
     }
 
+    @Test
+    void sqlServerShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user ALTER COLUMN username NVARCHAR(128) NULL;"
+            );
+        }
+    }
+
+    @Test
+    void sqlServerShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user ALTER COLUMN username NVARCHAR(128) NULL;ALTER TABLE auto_sync_modify_batch_user ALTER COLUMN balance DECIMAL(18,4) NULL;",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             loadDriverOrSkip();

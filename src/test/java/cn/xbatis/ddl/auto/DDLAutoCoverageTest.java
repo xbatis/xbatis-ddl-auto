@@ -726,6 +726,56 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void modifySqlShouldCoverSingleAndBatchVariants() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+        TableInfo singleTableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class);
+        ColumnInfo singleUsername = column(DbType.MYSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class, "username");
+
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_user MODIFY COLUMN username VARCHAR(128);"),
+                builder.buildModifyColumnSqlList(DbType.MYSQL, singleTableInfo, Collections.singletonList(singleUsername), "auto_sync_modify_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_user ALTER COLUMN username TYPE VARCHAR(128);"),
+                builder.buildModifyColumnSqlList(DbType.PGSQL, singleTableInfo, Collections.singletonList(column(DbType.PGSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class, "username")), "auto_sync_modify_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_user MODIFY (username VARCHAR2(128));"),
+                builder.buildModifyColumnSqlList(DbType.ORACLE, singleTableInfo, Collections.singletonList(column(DbType.ORACLE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class, "username")), "auto_sync_modify_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_user ALTER COLUMN username SET DATA TYPE VARCHAR(128);"),
+                builder.buildModifyColumnSqlList(DbType.DB2, singleTableInfo, Collections.singletonList(column(DbType.DB2, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class, "username")), "auto_sync_modify_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_user ALTER COLUMN username NVARCHAR(128) NULL;"),
+                builder.buildModifyColumnSqlList(DbType.SQL_SERVER, singleTableInfo, Collections.singletonList(column(DbType.SQL_SERVER, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class, "username")), "auto_sync_modify_user"));
+        assertThrows(UnsupportedOperationException.class,
+                () -> builder.buildModifyColumnSqlList(DbType.SQLITE, singleTableInfo, Collections.singletonList(column(DbType.SQLITE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class, "username")), "auto_sync_modify_user"));
+
+        TableInfo batchTableInfo = Tables.get(ModifyBatchUserV2.class);
+        assertEquals(Collections.singletonList(
+                        "ALTER TABLE auto_modify_batch_user MODIFY COLUMN username VARCHAR(128), MODIFY COLUMN balance DECIMAL(18,4), MODIFY COLUMN age BIGINT;"),
+                builder.buildModifyColumnSqlList(DbType.MYSQL, batchTableInfo, Arrays.asList(
+                        column(DbType.MYSQL, ModifyBatchUserV2.class, "username"),
+                        column(DbType.MYSQL, ModifyBatchUserV2.class, "balance"),
+                        column(DbType.MYSQL, ModifyBatchUserV2.class, "age")
+                ), "auto_modify_batch_user"));
+        assertEquals(Collections.singletonList(
+                        "ALTER TABLE auto_modify_batch_user ALTER COLUMN username TYPE VARCHAR(128), ALTER COLUMN balance TYPE DECIMAL(18,4), ALTER COLUMN age TYPE BIGINT;"),
+                builder.buildModifyColumnSqlList(DbType.PGSQL, batchTableInfo, Arrays.asList(
+                        column(DbType.PGSQL, ModifyBatchUserV2.class, "username"),
+                        column(DbType.PGSQL, ModifyBatchUserV2.class, "balance"),
+                        column(DbType.PGSQL, ModifyBatchUserV2.class, "age")
+                ), "auto_modify_batch_user"));
+        assertEquals(Collections.singletonList(
+                        "ALTER TABLE auto_modify_batch_user MODIFY (username VARCHAR2(128), balance NUMBER(18,4), age NUMBER(19));"),
+                builder.buildModifyColumnSqlList(DbType.ORACLE, batchTableInfo, Arrays.asList(
+                        column(DbType.ORACLE, ModifyBatchUserV2.class, "username"),
+                        column(DbType.ORACLE, ModifyBatchUserV2.class, "balance"),
+                        column(DbType.ORACLE, ModifyBatchUserV2.class, "age")
+                ), "auto_modify_batch_user"));
+        assertEquals(Collections.singletonList(
+                        "ALTER TABLE auto_modify_batch_user ALTER COLUMN username SET DATA TYPE VARCHAR(128) ALTER COLUMN balance SET DATA TYPE DECIMAL(18,4) ALTER COLUMN age SET DATA TYPE BIGINT;"),
+                builder.buildModifyColumnSqlList(DbType.DB2, batchTableInfo, Arrays.asList(
+                        column(DbType.DB2, ModifyBatchUserV2.class, "username"),
+                        column(DbType.DB2, ModifyBatchUserV2.class, "balance"),
+                        column(DbType.DB2, ModifyBatchUserV2.class, "age")
+                ), "auto_modify_batch_user"));
+    }
+
+    @Test
     void syncModeShouldIgnoreConstraintIndexesWhenDroppingExtraIndexes() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
         TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class);
@@ -2166,6 +2216,36 @@ class DDLAutoCoverageTest {
 
         @ColumnDefinition(comment = "用户名")
         private String username;
+    }
+
+    @Table("auto_modify_batch_user")
+    static class ModifyBatchUserV1 {
+
+        @TableId
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+
+        @ColumnDefinition(precision = 12, scale = 2)
+        private BigDecimal balance;
+
+        private Integer age;
+    }
+
+    @Table("auto_modify_batch_user")
+    static class ModifyBatchUserV2 {
+
+        @TableId
+        private Long id;
+
+        @ColumnDefinition(length = 128)
+        private String username;
+
+        @ColumnDefinition(precision = 18, scale = 4)
+        private BigDecimal balance;
+
+        private Long age;
     }
 
     @Table("auto_long_unique_name_user_with_an_extra_long_name")

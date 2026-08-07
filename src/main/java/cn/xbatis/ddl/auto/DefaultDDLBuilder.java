@@ -138,6 +138,16 @@ public class DefaultDDLBuilder implements DDLBuilder {
     }
 
     @Override
+    public List<String> modifyColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns) {
+        return buildModifyColumnSqlList(dbType, tableInfo, columns);
+    }
+
+    @Override
+    public List<String> modifyColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        return buildModifyColumnSqlList(dbType, tableInfo, columns, tableName);
+    }
+
+    @Override
     public String createTableSql(IDbType dbType, Class<?> entityClass) {
         return buildCreateTableSql(dbType, entityClass);
     }
@@ -384,6 +394,160 @@ public class DefaultDDLBuilder implements DDLBuilder {
     }
 
     /**
+     * 根据已解析的实体上下文生成 MODIFY COLUMN SQL。
+     */
+    protected String buildModifyColumnSql(DDLContext context, ColumnInfo column) {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("ALTER TABLE ");
+        appendTableName(ddl, context);
+        if (isMysql(context.dbType)) {
+            ddl.append(" MODIFY COLUMN ");
+            ddl.append(buildModifyColumnDefinitionSql(context, column));
+        } else if (isPostgresql(context.dbType)) {
+            ddl.append(" ALTER COLUMN ");
+            ddl.append(context.dbType.wrap(column.getName()));
+            ddl.append(" TYPE ");
+            ddl.append(buildModifyColumnTypeSql(context, column));
+        } else if (isDb2(context.dbType) || isH2(context.dbType)) {
+            ddl.append(" ALTER COLUMN ");
+            ddl.append(context.dbType.wrap(column.getName()));
+            ddl.append(" SET DATA TYPE ");
+            ddl.append(buildModifyColumnTypeSql(context, column));
+        } else if (isOracle(context.dbType)) {
+            ddl.append(" MODIFY (");
+            ddl.append(buildModifyColumnDefinitionSql(context, column));
+            ddl.append(")");
+        } else if (isSqlServer(context.dbType)) {
+            ddl.append(" ALTER COLUMN ");
+            ddl.append(context.dbType.wrap(column.getName()));
+            ddl.append(" ");
+            ddl.append(buildModifyColumnTypeSql(context, column));
+            if (column.getDefinition().nullable()) {
+                ddl.append(" NULL");
+            } else {
+                ddl.append(" NOT NULL");
+            }
+        } else {
+            ddl.append(" MODIFY COLUMN ");
+            ddl.append(buildModifyColumnDefinitionSql(context, column));
+        }
+        ddl.append(";");
+        return ddl.toString();
+    }
+
+    /**
+     * 根据已解析的实体上下文生成批量 MODIFY COLUMN SQL。
+     */
+    protected String buildModifyColumnsSql(DDLContext context) {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("ALTER TABLE ");
+        appendTableName(ddl, context);
+        if (isMysql(context.dbType)) {
+            ddl.append(" ");
+            for (int i = 0; i < context.columns.size(); i++) {
+                if (i > 0) {
+                    ddl.append(", ");
+                }
+                ddl.append("MODIFY COLUMN ");
+                ddl.append(buildModifyColumnDefinitionSql(context, context.columns.get(i)));
+            }
+        } else if (isPostgresql(context.dbType)) {
+            ddl.append(" ");
+            for (int i = 0; i < context.columns.size(); i++) {
+                if (i > 0) {
+                    ddl.append(", ");
+                }
+                ddl.append("ALTER COLUMN ");
+                ddl.append(context.dbType.wrap(context.columns.get(i).getName()));
+                ddl.append(" TYPE ");
+                ddl.append(buildModifyColumnTypeSql(context, context.columns.get(i)));
+            }
+        } else if (isDb2(context.dbType) || isH2(context.dbType)) {
+            ddl.append(" ");
+            for (int i = 0; i < context.columns.size(); i++) {
+                if (i > 0) {
+                    ddl.append(" ");
+                }
+                ddl.append("ALTER COLUMN ");
+                ddl.append(context.dbType.wrap(context.columns.get(i).getName()));
+                ddl.append(" SET DATA TYPE ");
+                ddl.append(buildModifyColumnTypeSql(context, context.columns.get(i)));
+            }
+        } else if (isOracle(context.dbType)) {
+            ddl.append(" MODIFY (");
+            appendModifyColumnDefinitions(ddl, context);
+            ddl.append(")");
+        } else if (isSqlServer(context.dbType)) {
+            throw new UnsupportedOperationException(context.dbType.getName() + " does not support batch MODIFY COLUMN");
+        } else {
+            throw new UnsupportedOperationException(context.dbType.getName() + " does not support batch MODIFY COLUMN");
+        }
+        ddl.append(";");
+        return ddl.toString();
+    }
+
+    /**
+     * 追加批量 MODIFY COLUMN 的列定义列表。
+     */
+    protected void appendModifyColumnDefinitions(StringBuilder ddl, DDLContext context) {
+        for (int i = 0; i < context.columns.size(); i++) {
+            if (i > 0) {
+                ddl.append(", ");
+            }
+            ddl.append(buildModifyColumnDefinitionSql(context, context.columns.get(i)));
+        }
+    }
+
+    /**
+     * 生成单个字段的 MODIFY COLUMN 列定义。
+     */
+    protected String buildModifyColumnDefinitionSql(DDLContext context, ColumnInfo column) {
+        if (isSqlServer(context.dbType)) {
+            StringBuilder ddl = new StringBuilder();
+            ddl.append(buildModifyColumnTypeSql(context, column));
+            ddl.append(column.getDefinition().nullable() ? " NULL" : " NOT NULL");
+            return ddl.toString();
+        }
+        if (isPostgresql(context.dbType) || isDb2(context.dbType) || isH2(context.dbType)) {
+            return buildModifyColumnTypeSql(context, column);
+        }
+        return buildColumnSql(context, column, false, false).trim();
+    }
+
+    /**
+     * 生成单个字段的修改类型片段。
+     */
+    protected String buildModifyColumnTypeSql(DDLContext context, ColumnInfo column) {
+        ColumnDefinition columnDefinition = column.getDefinition();
+        if (!isBlank(columnDefinition.definition())) {
+            return getColumnDefinitionType(columnDefinition);
+        }
+        boolean autoIncrement = isAutoIncrement(column, context.idColumnCount);
+        if (column.getJavaType().isEnum()) {
+            Class<?> enumCodeType = getEnumSupportCodeType(column.getJavaType());
+            if (enumCodeType != null) {
+                return getColumnType(context.dbType, enumCodeType, columnDefinition, false);
+            }
+            return getStringType(context.dbType, getLength(columnDefinition, 64));
+        }
+        return getColumnType(context.dbType, column, autoIncrement);
+    }
+
+    /**
+     * 判断数据库是否是 DB2。
+     */
+    protected boolean isDb2(IDbType dbType) {
+        return dbType == DbType.DB2;
+    }
+
+    /**
+     * 判断数据库是否使用 H2 的修改列语法。
+     */
+    protected boolean isH2(IDbType dbType) {
+        return dbType == DbType.H2;
+    }
+
+    /**
      * 根据已解析的实体上下文生成 DROP INDEX SQL。
      */
     protected String buildDropIndexSql(DDLContext context, String indexName) {
@@ -521,6 +685,56 @@ public class DefaultDDLBuilder implements DDLBuilder {
             sqlList.add(buildDropColumnSql(context, columnName));
         }
         return sqlList;
+    }
+
+    /**
+     * 根据指定物理表批量生成 MODIFY COLUMN SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columns     需要修改的列元数据集合
+     * @return MODIFY COLUMN 语句列表
+     */
+    public List<String> buildModifyColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns) {
+        return buildModifyColumnSqlList(dbType, tableInfo, columns, tableInfo.getTableName());
+    }
+
+    /**
+     * 根据指定物理表批量生成 MODIFY COLUMN SQL 列表。
+     *
+     * @param dbType      数据库类型
+     * @param tableInfo   xbatis 表元数据
+     * @param columns     需要修改的列元数据集合
+     * @param tableName   物理表名
+     * @return MODIFY COLUMN 语句列表
+     */
+    public List<String> buildModifyColumnSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        Objects.requireNonNull(dbType, "dbType");
+        Objects.requireNonNull(tableInfo, "tableInfo");
+        Objects.requireNonNull(columns, "columns");
+        Objects.requireNonNull(tableName, "tableName");
+
+        if (!DDLTableNameResolverUtil.isTable(tableInfo) || columns.isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (!supportsModifyColumn(dbType)) {
+            throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY COLUMN");
+        }
+
+        List<ColumnInfo> modifyColumns = new ArrayList<>(columns.size());
+        for (ColumnInfo column : columns) {
+            modifyColumns.add(Objects.requireNonNull(column, "column"));
+        }
+
+        DDLContext context = createContext(dbType, tableInfo, modifyColumns, tableName);
+        if (context.columns.size() == 1 || !supportsMultipleModifyColumns(context.dbType)) {
+            List<String> sqlList = new ArrayList<>(context.columns.size());
+            for (ColumnInfo column : context.columns) {
+                sqlList.add(buildModifyColumnSql(context, column));
+            }
+            return sqlList;
+        }
+        return Collections.singletonList(buildModifyColumnsSql(context));
     }
 
     /**
@@ -1816,6 +2030,20 @@ public class DefaultDDLBuilder implements DDLBuilder {
      */
     protected boolean supportsMultipleAddColumns(IDbType dbType) {
         return dialect.supportsMultipleAddColumns(dbType);
+    }
+
+    /**
+     * 判断数据库是否支持修改列。
+     */
+    protected boolean supportsModifyColumn(IDbType dbType) {
+        return dialect.supportsModifyColumn(dbType);
+    }
+
+    /**
+     * 判断数据库是否支持批量修改多个列。
+     */
+    protected boolean supportsMultipleModifyColumns(IDbType dbType) {
+        return dialect.supportsMultipleModifyColumns(dbType);
     }
 
     /**

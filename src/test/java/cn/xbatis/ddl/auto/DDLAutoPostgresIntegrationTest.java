@@ -179,6 +179,39 @@ class DDLAutoPostgresIntegrationTest {
         }
     }
 
+    @Test
+    void postgresShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyFlow(
+                    DbType.PGSQL,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user ALTER COLUMN username TYPE VARCHAR(128);"
+            );
+        }
+    }
+
+    @Test
+    void postgresShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(
+                    DbType.PGSQL,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user ALTER COLUMN username TYPE VARCHAR(128), ALTER COLUMN balance TYPE DECIMAL(18,4);",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             return DriverManager.getConnection(POSTGRES_URL, POSTGRES_USERNAME, POSTGRES_PASSWORD);

@@ -179,6 +179,39 @@ class DDLAutoOracleIntegrationTest {
         }
     }
 
+    @Test
+    void oracleShouldModifyChangedColumnsInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyFlow(
+                    DbType.ORACLE,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV2.class,
+                    "auto_sync_modify_user",
+                    "ALTER TABLE auto_sync_modify_user MODIFY (username VARCHAR2(128));"
+            );
+        }
+    }
+
+    @Test
+    void oracleShouldModifyMultipleChangedColumnsInSingleAlter() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyBatchFlow(
+                    DbType.ORACLE,
+                    connection,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV1.class,
+                    DDLAutoExternalDatabaseIntegrationSupport.SyncModifyBatchUserV2.class,
+                    "auto_sync_modify_batch_user",
+                    "ALTER TABLE auto_sync_modify_batch_user MODIFY (username VARCHAR2(128), balance NUMBER(18,4));",
+                    64,
+                    128,
+                    12,
+                    18,
+                    4
+            );
+        }
+    }
+
     private static Connection openDatabaseConnectionOrSkip() throws SQLException {
         try {
             return DriverManager.getConnection(ORACLE_URL, connectionProperties());
