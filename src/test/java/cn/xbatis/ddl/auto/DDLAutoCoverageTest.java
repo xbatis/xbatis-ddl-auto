@@ -726,6 +726,35 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void syncModeShouldIgnoreConstraintIndexesWhenDroppingExtraIndexes() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class);
+        Map<String, TestIndexSpec> existingIndexes = new LinkedHashMap<>();
+        existingIndexes.put("idx_sync_username", TestIndexSpec.nonUnique("username"));
+        existingIndexes.put("idx_sync_email", TestIndexSpec.nonUnique("email"));
+        existingIndexes.put("idx_sync_legacy_code", TestIndexSpec.nonUnique("legacy_code"));
+        existingIndexes.put("index33557033", TestIndexSpec.unique("id"));
+
+        assertEquals(Collections.singletonList("DROP INDEX idx_sync_legacy_code;"),
+                creator.exposeDropIndexSqlList(DbType.DM, tableInfo, "auto_sync_user", existingIndexes));
+
+        Map<String, TestIndexSpec> dmPrefixUserIndex = new LinkedHashMap<>();
+        dmPrefixUserIndex.put("idx_sync_username", TestIndexSpec.nonUnique("username"));
+        dmPrefixUserIndex.put("idx_sync_email", TestIndexSpec.nonUnique("email"));
+        dmPrefixUserIndex.put("index33557033", TestIndexSpec.nonUnique("legacy_code"));
+        assertEquals(Collections.singletonList("DROP INDEX index33557033;"),
+                creator.exposeDropIndexSqlList(DbType.DM, tableInfo, "auto_sync_user", dmPrefixUserIndex));
+
+        Map<String, TestIndexSpec> sqliteExistingIndexes = new LinkedHashMap<>();
+        sqliteExistingIndexes.put("idx_sync_username", TestIndexSpec.nonUnique("username"));
+        sqliteExistingIndexes.put("idx_sync_email", TestIndexSpec.nonUnique("email"));
+        sqliteExistingIndexes.put("idx_sync_legacy_code", TestIndexSpec.nonUnique("legacy_code"));
+        sqliteExistingIndexes.put("sqlite_autoindex_auto_sync_user_1", TestIndexSpec.unique("id"));
+        assertEquals(Collections.singletonList("DROP INDEX idx_sync_legacy_code;"),
+                creator.exposeDropIndexSqlList(DbType.SQLITE, tableInfo, "auto_sync_user", sqliteExistingIndexes));
+    }
+
+    @Test
     void builderValidationBranchesShouldBeCovered() {
         DefaultDDLBuilder builder = new DefaultDDLBuilder();
 
@@ -1394,6 +1423,16 @@ class DDLAutoCoverageTest {
             return createAddColumnSqlList(dbType, connection, entityClass);
         }
 
+        List<String> exposeDropIndexSqlList(IDbType dbType, TableInfo tableInfo, String tableName, Map<String, TestIndexSpec> indexes) {
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, tableName);
+            databaseMetadata.addPrimaryKey("catalog", null, tableName, "PRIMARY", "id");
+            for (Map.Entry<String, TestIndexSpec> entry : indexes.entrySet()) {
+                databaseMetadata.addIndex("catalog", null, tableName, entry.getKey(), entry.getValue().nonUnique, entry.getValue().columnNames);
+            }
+            return createDropIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
         boolean exposeDatabaseMetadataSchemaCatalogFallback(TableInfo tableInfo) {
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
             databaseMetadata.addTable(tableInfo.getSchema(), null, tableInfo.getTableName());
@@ -1482,6 +1521,24 @@ class DDLAutoCoverageTest {
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
             databaseMetadata.addTable("catalog", null, tableInfo.getTableName(), "VIEW");
             return databaseMetadata.objectType(tableInfo);
+        }
+    }
+
+    static class TestIndexSpec {
+        final boolean nonUnique;
+        final List<String> columnNames;
+
+        private TestIndexSpec(boolean nonUnique, List<String> columnNames) {
+            this.nonUnique = nonUnique;
+            this.columnNames = columnNames;
+        }
+
+        static TestIndexSpec unique(String... columnNames) {
+            return new TestIndexSpec(false, Arrays.asList(columnNames));
+        }
+
+        static TestIndexSpec nonUnique(String... columnNames) {
+            return new TestIndexSpec(true, Arrays.asList(columnNames));
         }
     }
 

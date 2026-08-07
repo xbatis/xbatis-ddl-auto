@@ -26,8 +26,6 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
     private static final String SEQUENCE_TYPE = "SEQUENCE";
 
-    private static final String SQLITE_AUTO_INDEX_PREFIX = "sqlite_autoindex_";
-
     private static final String[] TABLE_TYPES = new String[]{TABLE_TYPE};
 
     private static final String[] TABLE_AND_VIEW_TYPES = new String[]{TABLE_TYPE, VIEW_TYPE};
@@ -1491,14 +1489,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         List<IndexInfo> indexes = ddlBuilder.resolveIndexes(dbType, tableInfo, entityMetadata.getIndexes(), tableName);
         MetadataNameIndex entityIndexNameIndex = metadataNameIndex(indexNames(indexes));
-        MetadataNameIndex primaryKeyIndexNameIndex = metadataNameIndex(databaseMetadata.getPrimaryKeyIndexNames(tableInfo, tableName));
+        Set<String> constraintIndexNames = databaseMetadata.getPrimaryKeyIndexNames(tableInfo, tableName);
+        constraintIndexNames.addAll(databaseMetadata.getUniqueIndexNames(tableInfo, tableName));
+        MetadataNameIndex constraintIndexNameIndex = metadataNameIndex(constraintIndexNames);
         List<String> existingIndexNames = new ArrayList<>(databaseMetadata.getIndexNames(tableInfo, tableName));
         List<String> missingIndexNames = new ArrayList<>();
         for (String indexName : existingIndexNames) {
-            if (isSqliteAutoIndexName(dbType, indexName)) {
-                continue;
-            }
-            if (primaryKeyIndexNameIndex.contains(indexName)) {
+            if (constraintIndexNameIndex.contains(indexName)) {
                 continue;
             }
             if (!entityIndexNameIndex.contains(indexName)) {
@@ -1701,15 +1698,6 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      */
     protected String normalize(String value) {
         return metadataNameMatcher.normalize(value);
-    }
-
-    /**
-     * SQLite 的系统自动索引不能通过 DROP INDEX 删除，SYNC 时需要跳过。
-     */
-    protected boolean isSqliteAutoIndexName(IDbType dbType, String indexName) {
-        return dbType == DbType.SQLITE
-                && indexName != null
-                && normalize(indexName).startsWith(SQLITE_AUTO_INDEX_PREFIX);
     }
 
     /**
@@ -2153,18 +2141,20 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                     indexNames.add(primaryKey.primaryKeyName);
                 }
             }
-            List<String> primaryKeyColumnNames = new ArrayList<>(getPrimaryKeyColumnNames(tableInfo, tableName));
-            if (primaryKeyColumnNames.isEmpty()) {
-                return indexNames;
-            }
+            return indexNames;
+        }
+
+        /**
+         * 从 JDBC 索引元数据中收集唯一索引名，SYNC 删除普通索引时不误删约束索引。
+         */
+        Set<String> getUniqueIndexNames(TableInfo tableInfo, String tableName) {
+            Set<String> indexNames = new LinkedHashSet<>();
             List<IndexMetadata> indexes = indexesByTableName.get(metadataLookupKey(tableName));
             if (indexes == null) {
                 return indexNames;
             }
             for (IndexMetadata index : indexes) {
-                if (matches(tableInfo, tableName, index.catalog, index.schema, index.tableName)
-                        && !index.nonUnique
-                        && sameMetadataNames(primaryKeyColumnNames, index.columnNames)) {
+                if (!index.nonUnique && matches(tableInfo, tableName, index.catalog, index.schema, index.tableName)) {
                     indexNames.add(index.indexName);
                 }
             }
@@ -2247,12 +2237,19 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return null;
         }
 
-        private boolean sameMetadataNames(List<String> expectedNames, List<String> actualNames) {
+        private boolean sameMetadataNames(Collection<String> expectedNames, Collection<String> actualNames) {
             if (expectedNames.size() != actualNames.size()) {
                 return false;
             }
-            for (int i = 0; i < expectedNames.size(); i++) {
-                if (!metadataNameMatcher.matchesMetadataName(expectedNames.get(i), actualNames.get(i))) {
+            Set<String> normalizedActualNames = new LinkedHashSet<>();
+            for (String actualName : actualNames) {
+                normalizedActualNames.add(normalize(actualName));
+            }
+            if (expectedNames.size() != normalizedActualNames.size()) {
+                return false;
+            }
+            for (String expectedName : expectedNames) {
+                if (!normalizedActualNames.contains(normalize(expectedName))) {
                     return false;
                 }
             }
