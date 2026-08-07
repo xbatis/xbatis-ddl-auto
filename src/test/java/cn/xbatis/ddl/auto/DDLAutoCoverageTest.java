@@ -803,7 +803,13 @@ class DDLAutoCoverageTest {
                         "ALTER TABLE auto_sync_modify_user ALTER COLUMN id DROP DEFAULT;",
                         "DROP SEQUENCE IF EXISTS auto_sync_modify_user_id_seq;"),
                 creator.exposeAutoIncrementModifySqlList(DbType.GAUSS, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class, "auto_sync_modify_user", "YES"));
+        assertEquals(Arrays.asList(
+                        "ALTER TABLE auto_sync_modify_user MODIFY (id NUMBER(19) NOT NULL);",
+                        "ALTER TABLE auto_sync_modify_user MODIFY (id DROP IDENTITY);"),
+                creator.exposeAutoIncrementModifySqlList(DbType.ORACLE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyUserV1.class, "auto_sync_modify_user", "YES"));
         assertTrue(creator.exposeAutoIncrementModifySqlList(DbType.MYSQL, FacadeUser.class, "auto_facade_user", "YES").isEmpty());
+        assertThrows(UnsupportedOperationException.class,
+                () -> creator.exposeAutoIncrementModifySqlList(DbType.ORACLE, FacadeUser.class, "auto_facade_user", "NO"));
         assertThrows(UnsupportedOperationException.class,
                 () -> creator.exposeAutoIncrementModifySqlList(DbType.SQL_SERVER, FacadeUser.class, "auto_facade_user", "NO"));
     }
@@ -852,6 +858,41 @@ class DDLAutoCoverageTest {
         assertEquals("old comment", creator.exposeColumnRemark(metaData,
                 Tables.get(CommentModifyUserV2.class), "catalog", "dbo", "auto_comment_modify_user", "username"));
         assertEquals(1, creator.remarkReadCount);
+    }
+
+    @Test
+    void oracleIdentityColumnShouldUseDataDictionaryWhenJdbcAutoIncrementNo() throws Exception {
+        OracleIdentityExecutor creator = new OracleIdentityExecutor(Collections.singletonMap("ID", "YES"));
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("TABLE_CAT", null);
+        row.put("TABLE_SCHEM", "SYSTEM");
+        row.put("TABLE_NAME", "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER");
+        row.put("COLUMN_NAME", "ID");
+        row.put("DATA_TYPE", Types.NUMERIC);
+        row.put("TYPE_NAME", "NUMBER");
+        row.put("COLUMN_SIZE", 19);
+        row.put("DECIMAL_DIGITS", 0);
+        row.put("NULLABLE", DatabaseMetaData.columnNoNulls);
+        row.put("IS_AUTOINCREMENT", "NO");
+        row.put("IS_GENERATEDCOLUMN", "NO");
+
+        DatabaseMetaData metaData = proxy(DatabaseMetaData.class, (proxy, method, args) -> {
+            if ("getDatabaseProductName".equals(method.getName())) {
+                return "Oracle";
+            }
+            if ("getDatabaseMajorVersion".equals(method.getName())) {
+                return 19;
+            }
+            if ("getColumns".equals(method.getName())) {
+                return metadataResultSet(Collections.singletonList(row));
+            }
+            return defaultValue(method.getReturnType());
+        });
+
+        assertEquals("YES", creator.exposeColumnIsAutoIncrement(metaData,
+                Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyAutoIdReverseUserV1.class),
+                null, "SYSTEM", "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER", "id"));
+        assertEquals(1, creator.identityReadCount);
     }
 
     @Test
@@ -1704,6 +1745,34 @@ class DDLAutoCoverageTest {
                 normalizedColumnRemarks.put(normalize(entry.getKey()), entry.getValue());
             }
             return normalizedColumnRemarks;
+        }
+    }
+
+    static class OracleIdentityExecutor extends ExposedMetadataExecutor {
+
+        private final Map<String, String> identityColumns;
+
+        private int identityReadCount;
+
+        OracleIdentityExecutor(Map<String, String> identityColumns) {
+            this.identityColumns = identityColumns;
+        }
+
+        String exposeColumnIsAutoIncrement(DatabaseMetaData metaData, TableInfo tableInfo, String catalog, String schema, String tableName, String columnName) throws SQLException {
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata(catalog, schema);
+            readColumnMetadata(metaData, catalog, schema, tableName, databaseMetadata);
+            ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, columnName);
+            return columnMetadata == null ? null : columnMetadata.getIsAutoIncrement();
+        }
+
+        @Override
+        protected Map<String, String> readOracleIdentityColumns(DatabaseMetaData metaData, String schema, String tableName) {
+            identityReadCount++;
+            Map<String, String> normalizedIdentityColumns = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : identityColumns.entrySet()) {
+                normalizedIdentityColumns.put(normalize(entry.getKey()), entry.getValue());
+            }
+            return normalizedIdentityColumns;
         }
     }
 

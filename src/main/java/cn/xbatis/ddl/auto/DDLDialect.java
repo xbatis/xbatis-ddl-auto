@@ -246,7 +246,7 @@ public class DDLDialect {
 
     public boolean supportsSeparatedModifyAutoIncrement(IDbType dbType) {
         validateDbType(dbType);
-        return isPostgresql(dbType) || isDm(dbType);
+        return isPostgresql(dbType) || isDm(dbType) || isOracle(dbType);
     }
 
     public boolean supportsMultipleModifyColumns(IDbType dbType) {

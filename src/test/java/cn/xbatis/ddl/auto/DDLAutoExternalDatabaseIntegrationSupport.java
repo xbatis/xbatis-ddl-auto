@@ -1105,13 +1105,47 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                     try (ResultSet resultSet = metadata.getColumns(scope.catalog, scope.schema, tableCandidate, columnCandidate)) {
                         if (resultSet.next()) {
                             String value = resultSet.getString("IS_AUTOINCREMENT");
-                            return "YES".equalsIgnoreCase(value) || "TRUE".equalsIgnoreCase(value);
+                            if ("YES".equalsIgnoreCase(value) || "TRUE".equalsIgnoreCase(value)) {
+                                return true;
+                            }
+                            // Oracle JDBC getColumns 的 IS_AUTOINCREMENT 恒为 'NO'，identity 列从数据字典判断
+                            if (isOracle(connection) && isOracleIdentityColumn(connection, scope.schema, tableCandidate, columnCandidate)) {
+                                return true;
+                            }
+                            return false;
                         }
                     }
                 }
             }
         }
         return false;
+    }
+
+    private static boolean isOracle(Connection connection) {
+        try {
+            String productName = connection.getMetaData().getDatabaseProductName();
+            return productName != null && productName.toLowerCase(Locale.ROOT).contains("oracle");
+        } catch (SQLException exception) {
+            return false;
+        }
+    }
+
+    private static boolean isOracleIdentityColumn(Connection connection, String schema, String tableName, String columnName) throws SQLException {
+        boolean useCurrentSchema = schema == null || schema.isEmpty();
+        String sql = useCurrentSchema
+                ? "SELECT COUNT(*) FROM user_tab_columns WHERE table_name = ? AND column_name = ? AND identity_column = 'YES'"
+                : "SELECT COUNT(*) FROM all_tab_columns WHERE owner = ? AND table_name = ? AND column_name = ? AND identity_column = 'YES'";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            if (!useCurrentSchema) {
+                statement.setString(index++, schema);
+            }
+            statement.setString(index++, tableName);
+            statement.setString(index, columnName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() && resultSet.getInt(1) > 0;
+            }
+        }
     }
 
     static Integer columnDecimalDigits(Connection connection, String tableName, String columnName) throws SQLException {

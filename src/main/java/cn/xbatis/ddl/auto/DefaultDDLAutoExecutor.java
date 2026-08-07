@@ -1010,6 +1010,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         Map<String, Map<String, String>> sqlServerColumnRemarksByTable = supportsSqlServerColumnRemarks(metaData)
                 ? new LinkedHashMap<>()
                 : null;
+        Map<String, Map<String, String>> oracleIdentityColumnsByTable = supportsOracleIdentityColumns(metaData)
+                ? new LinkedHashMap<>()
+                : null;
         for (ColumnMetadata column : columns) {
             String remarks = column.remarks;
             if (sqlServerColumnRemarksByTable != null) {
@@ -1018,6 +1021,11 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 String remarksTableName = isBlank(column.tableName) ? tableName : column.tableName;
                 remarks = resolveSqlServerColumnRemarks(metaData, sqlServerColumnRemarksByTable,
                         remarksCatalog, remarksSchema, remarksTableName, column.columnName, remarks);
+            }
+            String isAutoIncrement = column.isAutoIncrement;
+            if (oracleIdentityColumnsByTable != null) {
+                isAutoIncrement = resolveOracleIdentityColumn(metaData, oracleIdentityColumnsByTable,
+                        catalog, schema, tableName, column.columnName, isAutoIncrement);
             }
             databaseMetadata.addColumn(
                     column.catalog,
@@ -1030,11 +1038,84 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                     column.decimalDigits,
                     column.nullable,
                     column.columnDefault,
-                    column.isAutoIncrement,
+                    isAutoIncrement,
                     column.isGeneratedColumn,
                     remarks
             );
         }
+    }
+
+    /**
+     * Oracle JDBC getColumns 的 IS_AUTOINCREMENT 恒为 'NO'，identity 列需要从数据字典补齐。
+     */
+    protected boolean supportsOracleIdentityColumns(DatabaseMetaData metaData) {
+        if (metaData == null) {
+            return false;
+        }
+        try {
+            String productName = metaData.getDatabaseProductName();
+            // identity_column 从 12c 起才有，旧版 Oracle 无法用数据字典补齐
+            return productName != null
+                    && productName.toLowerCase(Locale.ROOT).contains("oracle")
+                    && metaData.getDatabaseMajorVersion() >= 12;
+        } catch (SQLException ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * 读取 Oracle identity 列标记，非 identity 列保留 JDBC IS_AUTOINCREMENT 原值。
+     */
+    protected String resolveOracleIdentityColumn(DatabaseMetaData metaData,
+                                                Map<String, Map<String, String>> identityColumnsByTable,
+                                                String catalog,
+                                                String schema,
+                                                String tableName,
+                                                String columnName,
+                                                String fallbackIsAutoIncrement) throws SQLException {
+        if (isBlank(tableName) || isBlank(columnName)) {
+            return fallbackIsAutoIncrement;
+        }
+        String tableKey = metadataReadKey(catalog, schema, tableName);
+        Map<String, String> identityColumns = identityColumnsByTable.get(tableKey);
+        if (identityColumns == null) {
+            identityColumns = readOracleIdentityColumns(metaData, schema, tableName);
+            identityColumnsByTable.put(tableKey, identityColumns);
+        }
+        String columnKey = normalize(columnName);
+        return identityColumns.containsKey(columnKey) ? identityColumns.get(columnKey) : fallbackIsAutoIncrement;
+    }
+
+    /**
+     * 从 Oracle 数据字典读取指定表的 identity 列。
+     */
+    protected Map<String, String> readOracleIdentityColumns(DatabaseMetaData metaData, String schema, String tableName) throws SQLException {
+        String schemaName = unquoteIdentifier(schema);
+        String actualTableName = unquoteIdentifier(tableName);
+        if (metaData == null || isBlank(actualTableName)) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> identityColumns = new LinkedHashMap<>();
+        boolean useCurrentSchema = isBlank(schemaName);
+        String sql = useCurrentSchema
+                ? "SELECT column_name, identity_column FROM user_tab_columns WHERE table_name = ?"
+                : "SELECT column_name, identity_column FROM all_tab_columns WHERE owner = ? AND table_name = ?";
+        try (PreparedStatement statement = metaData.getConnection().prepareStatement(sql)) {
+            if (useCurrentSchema) {
+                statement.setString(1, actualTableName);
+            } else {
+                statement.setString(1, schemaName);
+                statement.setString(2, actualTableName);
+            }
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    if ("YES".equalsIgnoreCase(getString(resultSet, "identity_column"))) {
+                        identityColumns.put(normalize(getString(resultSet, "column_name")), "YES");
+                    }
+                }
+            }
+        }
+        return identityColumns;
     }
 
     /**

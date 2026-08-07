@@ -463,6 +463,14 @@ public class DefaultDDLBuilder implements DDLBuilder {
             } else {
                 ddl.append(" DROP IDENTITY");
             }
+        } else if (isOracle(context.dbType)) {
+            // Oracle 只能移除 identity，不能把已有列改为 identity 列
+            if (isAutoIncrement(column, context.idColumnCount)) {
+                throw new UnsupportedOperationException(context.dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
+            }
+            ddl.append(" MODIFY (");
+            ddl.append(context.dbType.wrap(column.getName()));
+            ddl.append(" DROP IDENTITY)");
         } else {
             ddl.append(" ALTER COLUMN ");
             ddl.append(context.dbType.wrap(column.getName()));

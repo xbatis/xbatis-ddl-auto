@@ -194,11 +194,22 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
-    void oracleShouldRejectPrimaryKeyAutoIncrementModifyInSyncMode() throws Exception {
+    void oracleShouldRejectAddingPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(
                     DbType.ORACLE,
                     connection
+            );
+        }
+    }
+
+    @Test
+    void oracleShouldRemovePrimaryKeyAutoIncrementInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementReverseFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_auto_id_reverse_user MODIFY (id DROP IDENTITY);"
             );
         }
     }
@@ -251,6 +262,8 @@ class DDLAutoOracleIntegrationTest {
         properties.setProperty("password", ORACLE_PASSWORD);
         properties.setProperty("oracle.net.CONNECT_TIMEOUT", ORACLE_CONNECT_TIMEOUT);
         properties.setProperty("oracle.jdbc.ReadTimeout", ORACLE_READ_TIMEOUT);
+        // Oracle JDBC 默认不返回列注释，必须开启 remarksReporting 才能通过 DatabaseMetaData 读到 COMMENT ON COLUMN
+        properties.setProperty("remarksReporting", "true");
         return properties;
     }
 
