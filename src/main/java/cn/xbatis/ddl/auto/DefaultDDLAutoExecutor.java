@@ -1862,6 +1862,11 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 // PostgreSQL 系默认值带 ::类型 转换后缀
                 .replaceAll("::[\\w\\s.]+$", "")
                 .replaceAll("^'(.*)'$", "$1")
+                // 各数据库对时间函数默认值的表达形式不同：MySQL 返回 current_timestamp()/curdate()，
+                // PostgreSQL 返回 now()，统一为 CURRENT_TIMESTAMP/CURRENT_DATE/CURRENT_TIME 语义
+                .replaceAll("(?i)(CURRENT_TIMESTAMP|NOW|LOCALTIMESTAMP)\\(\\)", "CURRENT_TIMESTAMP")
+                .replaceAll("(?i)(CURRENT_DATE|CURDATE|TODAY)\\(\\)", "CURRENT_DATE")
+                .replaceAll("(?i)(CURRENT_TIME|CURTIME)\\(\\)", "CURRENT_TIME")
                 .replaceAll("\\s+", " ")
                 .trim();
         // Oracle 移除默认值后 COLUMN_DEF 返回字符串 NULL，视为无默认值

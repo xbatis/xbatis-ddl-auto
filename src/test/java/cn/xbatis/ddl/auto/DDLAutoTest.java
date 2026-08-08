@@ -180,7 +180,8 @@ class DDLAutoTest {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
                     DbType.H2,
                     connection,
-                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';",
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN create_time SET DEFAULT CURRENT_TIMESTAMP;"
             );
         }
     }
@@ -270,13 +271,27 @@ class DDLAutoTest {
         List<ColumnInfo> addColumns = columns(DbType.MYSQL, UpdateMultiUserV2.class, "age", "email");
 
         assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER AFTER username, "
-                        + "ADD COLUMN email VARCHAR(128) AFTER age;",
+                        + "ADD COLUMN email VARCHAR(128) AFTER username;",
                 builder.addColumnSqlList(DbType.MYSQL, tableInfo, addColumns, "auto_update_multi_user",
                         new HashSet<>(Arrays.asList("id", "username"))).get(0));
 
         // 未提供物理表列信息时不生成 AFTER，保持原有合并语句
         assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);",
                 builder.addColumnSqlList(DbType.MYSQL, UpdateMultiUserV2.class, addColumns).get(0));
+    }
+
+    @Test
+    void mysqlShouldBacktrackAfterClauseToNearestExistingColumnWhenAddingMultipleColumns() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+        TableInfo tableInfo = Tables.get(AfterOrderUserV2.class);
+        List<ColumnInfo> addColumns = columns(DbType.MYSQL, AfterOrderUserV2.class, "age", "email", "phone");
+
+        // 连续新增列不能引用同批次新增列作为 AFTER 参照，统一回溯到最近的前置已存在列
+        assertEquals("ALTER TABLE auto_after_order_user ADD COLUMN age INTEGER AFTER username, "
+                        + "ADD COLUMN email VARCHAR(128) AFTER username, "
+                        + "ADD COLUMN phone VARCHAR(32) AFTER username;",
+                builder.addColumnSqlList(DbType.MYSQL, tableInfo, addColumns, "auto_after_order_user",
+                        new HashSet<>(Arrays.asList("id", "username"))).get(0));
     }
 
     @Test
@@ -1037,6 +1052,23 @@ class DDLAutoTest {
 
         @ColumnDefinition(length = 128)
         private String email;
+    }
+
+    @Table("auto_after_order_user")
+    static class AfterOrderUserV2 {
+
+        @TableId
+        private Long id;
+
+        private String username;
+
+        private Integer age;
+
+        @ColumnDefinition(length = 128)
+        private String email;
+
+        @ColumnDefinition(length = 32)
+        private String phone;
     }
 
     @Table("auto_h2_boolean_default_user")

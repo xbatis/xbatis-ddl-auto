@@ -172,7 +172,8 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
             assertSyncModifyDefaultFlow(
                     DbType.GAUSS,
                     connection,
-                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';",
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN create_time SET DEFAULT CURRENT_TIMESTAMP;"
             );
         }
     }

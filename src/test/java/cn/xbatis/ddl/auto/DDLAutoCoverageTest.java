@@ -844,15 +844,15 @@ class DDLAutoCoverageTest {
                 builder.modifyColumnDefaultSqlList(DbType.H2, modifyTableInfo,
                         Collections.singletonList(column(DbType.H2, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
                         "auto_sync_modify_default_user"));
-        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN username VARCHAR(64) DEFAULT 'new';"),
                 builder.modifyColumnDefaultSqlList(DbType.MYSQL, modifyTableInfo,
                         Collections.singletonList(column(DbType.MYSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
                         "auto_sync_modify_default_user"));
-        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN username VARCHAR(64) DEFAULT 'new';"),
                 builder.modifyColumnDefaultSqlList(DbType.MARIA_DB, modifyTableInfo,
                         Collections.singletonList(column(DbType.MARIA_DB, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
                         "auto_sync_modify_default_user"));
-        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN username VARCHAR(64) DEFAULT 'new';"),
                 builder.modifyColumnDefaultSqlList(DbType.OCEAN_BASE, modifyTableInfo,
                         Collections.singletonList(column(DbType.OCEAN_BASE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
                         "auto_sync_modify_default_user"));
@@ -871,6 +871,35 @@ class DDLAutoCoverageTest {
                         + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_username DEFAULT 'new' FOR username;"),
                 builder.modifyColumnDefaultSqlList(DbType.SQL_SERVER, modifyTableInfo,
                         Collections.singletonList(column(DbType.SQL_SERVER, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN create_time DATETIME DEFAULT CURRENT_TIMESTAMP;"),
+                builder.modifyColumnDefaultSqlList(DbType.MYSQL, modifyTableInfo,
+                        Collections.singletonList(column(DbType.MYSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "create_time")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN create_time DATETIME DEFAULT CURRENT_TIMESTAMP;"),
+                builder.modifyColumnDefaultSqlList(DbType.MARIA_DB, modifyTableInfo,
+                        Collections.singletonList(column(DbType.MARIA_DB, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "create_time")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN create_time SET DEFAULT CURRENT_TIMESTAMP;"),
+                builder.modifyColumnDefaultSqlList(DbType.PGSQL, modifyTableInfo,
+                        Collections.singletonList(column(DbType.PGSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "create_time")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN create_time SET DEFAULT CURRENT TIMESTAMP;"),
+                builder.modifyColumnDefaultSqlList(DbType.DB2, modifyTableInfo,
+                        Collections.singletonList(column(DbType.DB2, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "create_time")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY (create_time DEFAULT CURRENT_TIMESTAMP);"),
+                builder.modifyColumnDefaultSqlList(DbType.ORACLE, modifyTableInfo,
+                        Collections.singletonList(column(DbType.ORACLE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "create_time")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                        + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_modify_default_user') "
+                        + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'create_time', 'ColumnId'); "
+                        + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_modify_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                        + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_create_time DEFAULT SYSDATETIME() FOR create_time;"),
+                builder.modifyColumnDefaultSqlList(DbType.SQL_SERVER, modifyTableInfo,
+                        Collections.singletonList(column(DbType.SQL_SERVER, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "create_time")),
                         "auto_sync_modify_default_user"));
 
         assertEquals(Collections.singletonList("ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"),
@@ -921,7 +950,11 @@ class DDLAutoCoverageTest {
         assertEquals("NEW", creator.exposeNormalizeDefaultValue("(N'new')"));
         assertEquals("OLD", creator.exposeNormalizeDefaultValue("'old'::character varying"));
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CURRENT_TIMESTAMP"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("current_timestamp()"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("now()"));
         assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("(CURRENT_DATE)"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("curdate()"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("curtime()"));
         assertEquals("TRUNC(SYSDATE)", creator.exposeNormalizeDefaultValue("TRUNC(SYSDATE)"));
         assertEquals("", creator.exposeNormalizeDefaultValue("NULL"));
         assertEquals("", creator.exposeNormalizeDefaultValue("'NULL'"));

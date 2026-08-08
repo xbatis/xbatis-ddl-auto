@@ -104,7 +104,7 @@ class DDLAutoMysqlIntegrationTest {
                     DbType.MYSQL,
                     connection,
                     "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER AFTER username, "
-                            + "ADD COLUMN email VARCHAR(128) AFTER age;"
+                            + "ADD COLUMN email VARCHAR(128) AFTER username;"
             );
         }
     }
@@ -218,7 +218,8 @@ class DDLAutoMysqlIntegrationTest {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
                     DbType.MYSQL,
                     connection,
-                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+                    "ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN username VARCHAR(64) DEFAULT 'new';",
+                    "ALTER TABLE auto_sync_modify_default_user MODIFY COLUMN create_time DATETIME DEFAULT CURRENT_TIMESTAMP;"
             );
         }
     }

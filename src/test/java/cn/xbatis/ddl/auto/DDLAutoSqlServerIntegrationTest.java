@@ -221,7 +221,12 @@ class DDLAutoSqlServerIntegrationTest {
                             + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_modify_default_user') "
                             + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'username', 'ColumnId'); "
                             + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_modify_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
-                            + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_username DEFAULT 'new' FOR username;"
+                            + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_username DEFAULT 'new' FOR username;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_modify_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'create_time', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_modify_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_create_time DEFAULT SYSDATETIME() FOR create_time;"
             );
         }
     }

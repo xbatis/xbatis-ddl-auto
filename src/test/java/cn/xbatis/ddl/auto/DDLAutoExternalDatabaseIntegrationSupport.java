@@ -8,6 +8,7 @@ import db.sql.api.IDbType;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -469,19 +470,19 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         }
     }
 
-    static void assertSyncModifyDefaultFlow(IDbType dbType, Connection connection, String expectedModifySql) throws Exception {
-        assertSyncModifyDefaultFlow(dbType, connection, expectedModifySql, SYNC_MODIFY_DEFAULT_TABLE,
+    static void assertSyncModifyDefaultFlow(IDbType dbType, Connection connection, String... expectedModifySqlList) throws Exception {
+        assertSyncModifyDefaultFlow(dbType, connection, Arrays.asList(expectedModifySqlList), SYNC_MODIFY_DEFAULT_TABLE,
                 SyncModifyDefaultUserV1.class, SyncModifyDefaultUserV2.class, true);
     }
 
-    static void assertSyncModifyDefaultFlow(DatabaseCase databaseCase, String expectedModifySql) throws Exception {
+    static void assertSyncModifyDefaultFlow(DatabaseCase databaseCase, String... expectedModifySqlList) throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
-            assertSyncModifyDefaultFlow(databaseCase.dbType, connection, expectedModifySql);
+            assertSyncModifyDefaultFlow(databaseCase.dbType, connection, expectedModifySqlList);
         }
     }
 
     static void assertSyncDropDefaultFlow(IDbType dbType, Connection connection, String expectedDropSql) throws Exception {
-        assertSyncModifyDefaultFlow(dbType, connection, expectedDropSql, SYNC_DROP_DEFAULT_TABLE,
+        assertSyncModifyDefaultFlow(dbType, connection, Collections.singletonList(expectedDropSql), SYNC_DROP_DEFAULT_TABLE,
                 SyncDropDefaultUserV1.class, SyncDropDefaultUserV2.class, false);
     }
 
@@ -493,7 +494,7 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
     private static void assertSyncModifyDefaultFlow(IDbType dbType,
                                                     Connection connection,
-                                                    String expectedSql,
+                                                    List<String> expectedSqlList,
                                                     String tableName,
                                                     Class<?> v1Entity,
                                                     Class<?> v2Entity,
@@ -518,7 +519,7 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                     .add(v2Entity)
                     .execute(connection);
 
-            assertEquals(Collections.singletonList(expectedSql), syncExecutedSqlList);
+            assertEquals(expectedSqlList, syncExecutedSqlList);
             String actualDefault = columnDefaultValue(connection, tableName, "username");
             if (expectDefaultPresent) {
                 assertNotNull(actualDefault, "Expected username column default to be modified");
@@ -1719,6 +1720,9 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @ColumnDefinition(length = 64, defaultValue = "'old'")
         private String username;
+
+        @TableField
+        private LocalDateTime createTime;
     }
 
     @Table(SYNC_MODIFY_DEFAULT_TABLE)
@@ -1729,6 +1733,9 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @ColumnDefinition(length = 64, defaultValue = "'new'")
         private String username;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDateTime createTime;
     }
 
     @Table(SYNC_DROP_DEFAULT_TABLE)

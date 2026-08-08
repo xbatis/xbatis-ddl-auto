@@ -128,7 +128,8 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
     void dmShouldModifyColumnDefaultInSyncMode() throws Exception {
         assertSyncModifyDefaultFlow(
                 DATABASE,
-                "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');"
+                "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');",
+                "ALTER TABLE auto_sync_modify_default_user MODIFY (create_time DEFAULT CURRENT_TIMESTAMP);"
         );
     }
 

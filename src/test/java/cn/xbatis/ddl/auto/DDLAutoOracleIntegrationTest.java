@@ -199,7 +199,8 @@ class DDLAutoOracleIntegrationTest {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
                     DbType.ORACLE,
                     connection,
-                    "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');"
+                    "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');",
+                    "ALTER TABLE auto_sync_modify_default_user MODIFY (create_time DEFAULT CURRENT_TIMESTAMP);"
             );
         }
     }

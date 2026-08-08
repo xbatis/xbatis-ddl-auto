@@ -933,6 +933,23 @@ public class DefaultDDLBuilder implements DDLBuilder {
         if (isSqlServer(context.dbType)) {
             return buildSqlServerModifyColumnDefaultSql(context, column, defaultValue);
         }
+        if (isMysql(context.dbType)) {
+            // MySQL/MariaDB/OceanBase 使用 MODIFY COLUMN 并带上完整列定义，
+            // 避免 MODIFY 覆盖未指定的 NOT NULL/DEFAULT/COMMENT 等属性。
+            StringBuilder ddl = new StringBuilder();
+            ddl.append("ALTER TABLE ");
+            appendTableName(ddl, context);
+            if (isBlank(defaultValue)) {
+                ddl.append(" ALTER COLUMN ");
+                ddl.append(context.dbType.wrap(column.getName()));
+                ddl.append(" DROP DEFAULT");
+            } else {
+                ddl.append(" MODIFY COLUMN ");
+                ddl.append(buildModifyColumnDefinitionSql(context, column));
+            }
+            ddl.append(";");
+            return ddl.toString();
+        }
         StringBuilder ddl = new StringBuilder();
         ddl.append("ALTER TABLE ");
         appendTableName(ddl, context);
@@ -2362,9 +2379,9 @@ public class DefaultDDLBuilder implements DDLBuilder {
     /**
      * 生成 MySQL/MariaDB 新增列时的 AFTER 子句，使物理表列顺序与实体字段顺序一致。
      * <p>
-     * 参照列为实体列顺序中该新增列的前一列；仅当参照列已存在于物理表，或与当前新增列处于
-     * 同一批次（按生成顺序先执行）时才会生成 AFTER 子句。未提供物理表列信息时不会生成 AFTER，
-     * 避免引用未知列导致 SQL 执行失败。
+     * 参照列从实体列顺序中该新增列的直接前驱向前回溯，取最近的物理表已存在列；同一批次新增的
+     * 列不能作为 AFTER 参照列，否则 MySQL 会在执行时报错（错误 1054）。未提供物理表列信息时
+     * 不会生成 AFTER，避免引用未知列导致 SQL 执行失败。
      */
     protected String buildAddColumnAfterClause(DDLContext context, ColumnInfo column) {
         if (!supportsAddColumnAfterClause(context.dbType)) {
@@ -2388,11 +2405,13 @@ public class DefaultDDLBuilder implements DDLBuilder {
         if (index <= 0) {
             return "";
         }
-        String prevColumnName = allColumns.get(index - 1).getName();
-        if (!context.existsColumnNames.contains(prevColumnName) && !context.columnMap().containsKey(prevColumnName)) {
-            return "";
+        for (int i = index - 1; i >= 0; i--) {
+            String prevColumnName = allColumns.get(i).getName();
+            if (context.existsColumnNames.contains(prevColumnName)) {
+                return " AFTER " + context.dbType.wrap(prevColumnName);
+            }
         }
-        return " AFTER " + context.dbType.wrap(prevColumnName);
+        return "";
     }
 
     /**
