@@ -212,6 +212,35 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_modify_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'username', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_modify_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_username DEFAULT 'new' FOR username;"
+            );
+        }
+    }
+
+    @Test
+    void sqlServerShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_drop_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'username', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_drop_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']');"
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldRejectPrimaryKeyAutoIncrementModifyInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(

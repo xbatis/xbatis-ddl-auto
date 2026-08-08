@@ -191,6 +191,16 @@ class DDLAutoSqliteIntegrationTest {
     }
 
     @Test
+    void sqliteShouldIgnoreColumnDefaultModifyInSyncMode() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultIgnored(
+                    DbType.SQLITE,
+                    connection
+            );
+        }
+    }
+
+    @Test
     void sqliteShouldIgnoreInternalAutoIndexesDuringSync() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             DDLTestPrinter.ddl(DbType.SQLITE)

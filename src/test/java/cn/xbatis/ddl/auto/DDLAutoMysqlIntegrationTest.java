@@ -212,6 +212,28 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
+    void mysqlShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+            );
+        }
+    }
+
+    @Test
+    void mysqlShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"
+            );
+        }
+    }
+
+    @Test
     void mysqlShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementFlow(

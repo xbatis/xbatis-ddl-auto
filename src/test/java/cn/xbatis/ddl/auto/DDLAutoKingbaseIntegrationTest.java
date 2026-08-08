@@ -272,6 +272,28 @@ class DDLAutoKingbaseIntegrationTest extends DDLAutoExternalDatabaseIntegrationS
     }
 
     @Test
+    void kingbaseShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyDefaultFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+            );
+        }
+    }
+
+    @Test
+    void kingbaseShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncDropDefaultFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"
+            );
+        }
+    }
+
+    @Test
     void kingbaseShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertSyncModifyAutoIncrementFlow(

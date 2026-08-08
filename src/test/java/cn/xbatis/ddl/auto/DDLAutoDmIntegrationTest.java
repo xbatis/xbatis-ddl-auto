@@ -125,6 +125,22 @@ class DDLAutoDmIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupport
     }
 
     @Test
+    void dmShouldModifyColumnDefaultInSyncMode() throws Exception {
+        assertSyncModifyDefaultFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');"
+        );
+    }
+
+    @Test
+    void dmShouldDropColumnDefaultInSyncMode() throws Exception {
+        assertSyncDropDefaultFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_drop_default_user MODIFY (username DEFAULT NULL);"
+        );
+    }
+
+    @Test
     void dmShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         assertSyncModifyAutoIncrementFlow(
                 DATABASE,

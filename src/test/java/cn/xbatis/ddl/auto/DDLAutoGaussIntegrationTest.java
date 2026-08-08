@@ -167,6 +167,28 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
     }
 
     @Test
+    void gaussShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncModifyDefaultFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+            );
+        }
+    }
+
+    @Test
+    void gaussShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertSyncDropDefaultFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"
+            );
+        }
+    }
+
+    @Test
     void gaussShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertSyncModifyAutoIncrementFlow(

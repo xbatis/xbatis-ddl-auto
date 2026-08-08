@@ -194,6 +194,28 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
+    void oracleShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');"
+            );
+        }
+    }
+
+    @Test
+    void oracleShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "ALTER TABLE auto_sync_drop_default_user MODIFY (username DEFAULT NULL);"
+            );
+        }
+    }
+
+    @Test
     void oracleShouldRejectAddingPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementUnsupported(

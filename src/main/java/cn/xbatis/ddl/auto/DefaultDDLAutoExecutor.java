@@ -1654,6 +1654,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
         }
         List<ColumnInfo> modifiedColumns = new ArrayList<>();
+        List<ColumnInfo> defaultModifiedColumns = new ArrayList<>();
         List<ColumnInfo> commentModifiedColumns = new ArrayList<>();
         List<ColumnInfo> autoIncrementModifiedColumns = new ArrayList<>();
         for (ColumnInfo column : columns) {
@@ -1662,6 +1663,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 continue;
             }
             boolean typeChanged = columnTypeChanged(dbType, column, columnMetadata);
+            boolean defaultChanged = columnDefaultChanged(column, columnMetadata);
             boolean commentChanged = columnCommentChanged(column, columnMetadata);
             boolean autoIncrementChanged = columnAutoIncrementChanged(column, columnMetadata, idColumnCount);
             if (autoIncrementChanged && !dialect.supportsModifyAutoIncrement(dbType)) {
@@ -1670,6 +1672,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             boolean inlineAutoIncrementChanged = autoIncrementChanged && dialect.supportsInlineModifyAutoIncrement(dbType);
             if (typeChanged || inlineAutoIncrementChanged || (dialect.isMysql(dbType) && commentChanged)) {
                 modifiedColumns.add(column);
+            }
+            if (defaultChanged) {
+                defaultModifiedColumns.add(column);
             }
             if (autoIncrementChanged && dialect.supportsSeparatedModifyAutoIncrement(dbType)) {
                 autoIncrementModifiedColumns.add(column);
@@ -1681,6 +1686,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         List<String> sqlList = new ArrayList<>();
         if (!modifiedColumns.isEmpty()) {
             sqlList.addAll(ddlBuilder.modifyColumnSqlList(dbType, tableInfo, modifiedColumns, tableName));
+        }
+        if (!defaultModifiedColumns.isEmpty()) {
+            sqlList.addAll(ddlBuilder.modifyColumnDefaultSqlList(dbType, tableInfo, defaultModifiedColumns, tableName));
         }
         if (!autoIncrementModifiedColumns.isEmpty()) {
             sqlList.addAll(ddlBuilder.modifyColumnAutoIncrementSqlList(dbType, tableInfo, autoIncrementModifiedColumns, tableName));
@@ -1824,6 +1832,40 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         String actualComment = normalizeComment(columnMetadata.getRemarks());
         return !expectedComment.equals(actualComment);
+    }
+
+    /**
+     * 判断列默认值是否发生变化。自增主键列的默认值由数据库自增机制管理，不参与默认值对比。
+     */
+    protected boolean columnDefaultChanged(ColumnInfo column, ColumnMetadata columnMetadata) {
+        if (column.isId()) {
+            return false;
+        }
+        String expectedDefault = normalizeDefaultValue(column.getDefinition().defaultValue());
+        String actualDefault = normalizeDefaultValue(columnMetadata.getColumnDefault());
+        return !expectedDefault.equals(actualDefault);
+    }
+
+    /**
+     * 统一实体和数据库列默认值格式，便于比较。
+     */
+    protected String normalizeDefaultValue(String defaultValue) {
+        if (isBlank(defaultValue)) {
+            return "";
+        }
+        String normalized = defaultValue.trim()
+                .toUpperCase(Locale.ROOT)
+                // MySQL/SQL Server 默认表达式带外层括号
+                .replaceAll("^\\((.*)\\)$", "$1")
+                // SQL Server 字符串默认值带 N 前缀
+                .replaceAll("^N'", "'")
+                // PostgreSQL 系默认值带 ::类型 转换后缀
+                .replaceAll("::[\\w\\s.]+$", "")
+                .replaceAll("^'(.*)'$", "$1")
+                .replaceAll("\\s+", " ")
+                .trim();
+        // Oracle 移除默认值后 COLUMN_DEF 返回字符串 NULL，视为无默认值
+        return "NULL".equals(normalized) ? "" : normalized;
     }
 
     /**

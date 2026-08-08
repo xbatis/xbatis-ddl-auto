@@ -171,6 +171,28 @@ class DDLAutoTest {
     }
 
     @Test
+    void h2ShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openConnection("sync_modify_default")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
+                    DbType.H2,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+            );
+        }
+    }
+
+    @Test
+    void h2ShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openConnection("sync_drop_default")) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(
+                    DbType.H2,
+                    connection,
+                    "ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"
+            );
+        }
+    }
+
+    @Test
     void h2ShouldCreateBooleanDefaultValueColumns() throws Exception {
         try (Connection connection = openConnection("boolean_default")) {
             DDLAutoExternalDatabaseIntegrationSupport.assertBooleanDefaultValueFlow(

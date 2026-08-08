@@ -846,6 +846,94 @@ public class DefaultDDLBuilder implements DDLBuilder {
     }
 
     /**
+     * 为指定物理表批量生成修改字段默认值 SQL 列表。
+     */
+    @Override
+    public List<String> modifyColumnDefaultSqlList(IDbType dbType, TableInfo tableInfo, Collection<ColumnInfo> columns, String tableName) {
+        Objects.requireNonNull(dbType, "dbType");
+        Objects.requireNonNull(tableInfo, "tableInfo");
+        Objects.requireNonNull(columns, "columns");
+        Objects.requireNonNull(tableName, "tableName");
+
+        if (!DDLTableNameResolverUtil.isTable(tableInfo) || columns.isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (isSqlite(dbType)) {
+            throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY DEFAULT");
+        }
+
+        List<ColumnInfo> modifyColumns = new ArrayList<>(columns.size());
+        for (ColumnInfo column : columns) {
+            modifyColumns.add(Objects.requireNonNull(column, "column"));
+        }
+
+        DDLContext context = createContext(dbType, tableInfo, modifyColumns, tableName);
+        List<String> sqlList = new ArrayList<>(context.columns.size());
+        for (ColumnInfo column : context.columns) {
+            sqlList.add(buildModifyColumnDefaultSql(context, column));
+        }
+        return sqlList;
+    }
+
+    /**
+     * 根据已解析的实体上下文生成单独修改字段默认值的 SQL。
+     */
+    protected String buildModifyColumnDefaultSql(DDLContext context, ColumnInfo column) {
+        String defaultValue = column.getDefinition().defaultValue();
+        if (isOracle(context.dbType)) {
+            // Oracle/DM 通过 MODIFY 设置默认值，DEFAULT NULL 表示移除默认值
+            StringBuilder ddl = new StringBuilder();
+            ddl.append("ALTER TABLE ");
+            appendTableName(ddl, context);
+            ddl.append(" MODIFY (");
+            ddl.append(context.dbType.wrap(column.getName()));
+            ddl.append(" DEFAULT ");
+            ddl.append(isBlank(defaultValue) ? "NULL" : defaultValue);
+            ddl.append(");");
+            return ddl.toString();
+        }
+        if (isSqlServer(context.dbType)) {
+            return buildSqlServerModifyColumnDefaultSql(context, column, defaultValue);
+        }
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("ALTER TABLE ");
+        appendTableName(ddl, context);
+        ddl.append(" ALTER COLUMN ");
+        ddl.append(context.dbType.wrap(column.getName()));
+        if (isBlank(defaultValue)) {
+            ddl.append(" DROP DEFAULT");
+        } else {
+            ddl.append(" SET DEFAULT ").append(defaultValue);
+        }
+        ddl.append(";");
+        return ddl.toString();
+    }
+
+    /**
+     * SQL Server 的默认值是命名约束，需要先按列查出来删除再重建。
+     */
+    protected String buildSqlServerModifyColumnDefaultSql(DDLContext context, ColumnInfo column, String defaultValue) {
+        String tableName = context.tableName;
+        String columnName = column.getName();
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("DECLARE @defaultConstraintName sysname; ");
+        ddl.append("SELECT @defaultConstraintName = dc.name FROM sys.default_constraints dc ");
+        ddl.append("WHERE dc.parent_object_id = OBJECT_ID(N'").append(escapeSqlString(tableName)).append("') ");
+        ddl.append("AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'")
+                .append(escapeSqlString(columnName)).append("', 'ColumnId'); ");
+        ddl.append("IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [")
+                .append(escapeSqlString(tableName)).append("] DROP CONSTRAINT [' + @defaultConstraintName + ']');");
+        if (!isBlank(defaultValue)) {
+            ddl.append(" ALTER TABLE ");
+            ddl.append(context.dbType.wrap(tableName));
+            ddl.append(" ADD CONSTRAINT DF_").append(tableName).append("_").append(columnName);
+            ddl.append(" DEFAULT ").append(defaultValue);
+            ddl.append(" FOR ").append(context.dbType.wrap(columnName)).append(";");
+        }
+        return ddl.toString();
+    }
+
+    /**
      * 生成 Gauss 序列式自增列对应的序列创建 SQL。
      */
     protected String buildCreateSerialSequenceSql(DDLContext context, ColumnInfo column) {

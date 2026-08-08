@@ -194,6 +194,28 @@ class DDLAutoPostgresIntegrationTest {
     }
 
     @Test
+    void postgresShouldModifyColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyDefaultFlow(
+                    DbType.PGSQL,
+                    connection,
+                    "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+            );
+        }
+    }
+
+    @Test
+    void postgresShouldDropColumnDefaultInSyncMode() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(
+                    DbType.PGSQL,
+                    connection,
+                    "ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"
+            );
+        }
+    }
+
+    @Test
     void postgresShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncModifyAutoIncrementFlow(

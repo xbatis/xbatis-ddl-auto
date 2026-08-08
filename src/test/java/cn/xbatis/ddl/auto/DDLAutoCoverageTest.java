@@ -819,6 +819,119 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void modifyDefaultSqlShouldCoverDialectVariants() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+        TableInfo modifyTableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class);
+        TableInfo dropTableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class);
+
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.PGSQL, modifyTableInfo,
+                        Collections.singletonList(column(DbType.PGSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.KING_BASE, modifyTableInfo,
+                        Collections.singletonList(column(DbType.KING_BASE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.GAUSS, modifyTableInfo,
+                        Collections.singletonList(column(DbType.GAUSS, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.DB2, modifyTableInfo,
+                        Collections.singletonList(column(DbType.DB2, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.H2, modifyTableInfo,
+                        Collections.singletonList(column(DbType.H2, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.MYSQL, modifyTableInfo,
+                        Collections.singletonList(column(DbType.MYSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.MARIA_DB, modifyTableInfo,
+                        Collections.singletonList(column(DbType.MARIA_DB, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"),
+                builder.modifyColumnDefaultSqlList(DbType.OCEAN_BASE, modifyTableInfo,
+                        Collections.singletonList(column(DbType.OCEAN_BASE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');"),
+                builder.modifyColumnDefaultSqlList(DbType.ORACLE, modifyTableInfo,
+                        Collections.singletonList(column(DbType.ORACLE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');"),
+                builder.modifyColumnDefaultSqlList(DbType.DM, modifyTableInfo,
+                        Collections.singletonList(column(DbType.DM, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+        assertEquals(Collections.singletonList("DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                        + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_modify_default_user') "
+                        + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'username', 'ColumnId'); "
+                        + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_modify_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                        + "ALTER TABLE auto_sync_modify_default_user ADD CONSTRAINT DF_auto_sync_modify_default_user_username DEFAULT 'new' FOR username;"),
+                builder.modifyColumnDefaultSqlList(DbType.SQL_SERVER, modifyTableInfo,
+                        Collections.singletonList(column(DbType.SQL_SERVER, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"),
+                builder.modifyColumnDefaultSqlList(DbType.PGSQL, dropTableInfo,
+                        Collections.singletonList(column(DbType.PGSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class, "username")),
+                        "auto_sync_drop_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"),
+                builder.modifyColumnDefaultSqlList(DbType.DB2, dropTableInfo,
+                        Collections.singletonList(column(DbType.DB2, DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class, "username")),
+                        "auto_sync_drop_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"),
+                builder.modifyColumnDefaultSqlList(DbType.MYSQL, dropTableInfo,
+                        Collections.singletonList(column(DbType.MYSQL, DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class, "username")),
+                        "auto_sync_drop_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_drop_default_user MODIFY (username DEFAULT NULL);"),
+                builder.modifyColumnDefaultSqlList(DbType.ORACLE, dropTableInfo,
+                        Collections.singletonList(column(DbType.ORACLE, DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class, "username")),
+                        "auto_sync_drop_default_user"));
+        assertEquals(Collections.singletonList("ALTER TABLE auto_sync_drop_default_user MODIFY (username DEFAULT NULL);"),
+                builder.modifyColumnDefaultSqlList(DbType.DM, dropTableInfo,
+                        Collections.singletonList(column(DbType.DM, DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class, "username")),
+                        "auto_sync_drop_default_user"));
+        assertEquals(Collections.singletonList("DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                        + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_sync_drop_default_user') "
+                        + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'username', 'ColumnId'); "
+                        + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_sync_drop_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']');"),
+                builder.modifyColumnDefaultSqlList(DbType.SQL_SERVER, dropTableInfo,
+                        Collections.singletonList(column(DbType.SQL_SERVER, DDLAutoExternalDatabaseIntegrationSupport.SyncDropDefaultUserV2.class, "username")),
+                        "auto_sync_drop_default_user"));
+
+        assertThrows(UnsupportedOperationException.class,
+                () -> builder.modifyColumnDefaultSqlList(DbType.SQLITE, modifyTableInfo,
+                        Collections.singletonList(column(DbType.SQLITE, DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class, "username")),
+                        "auto_sync_modify_default_user"));
+    }
+
+    @Test
+    void defaultModifyDetectionShouldNormalizeDialectSpecificExpressions() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+
+        assertEquals("", creator.exposeNormalizeDefaultValue(null));
+        assertEquals("", creator.exposeNormalizeDefaultValue(""));
+        assertEquals("", creator.exposeNormalizeDefaultValue("   "));
+        assertEquals("OLD", creator.exposeNormalizeDefaultValue("'old'"));
+        assertEquals("NEW", creator.exposeNormalizeDefaultValue("'new'"));
+        assertEquals("NEW", creator.exposeNormalizeDefaultValue("N'new'"));
+        assertEquals("NEW", creator.exposeNormalizeDefaultValue("('new')"));
+        assertEquals("NEW", creator.exposeNormalizeDefaultValue("(N'new')"));
+        assertEquals("OLD", creator.exposeNormalizeDefaultValue("'old'::character varying"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CURRENT_TIMESTAMP"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("(CURRENT_DATE)"));
+        assertEquals("TRUNC(SYSDATE)", creator.exposeNormalizeDefaultValue("TRUNC(SYSDATE)"));
+        assertEquals("", creator.exposeNormalizeDefaultValue("NULL"));
+        assertEquals("", creator.exposeNormalizeDefaultValue("'NULL'"));
+        assertEquals("0", creator.exposeNormalizeDefaultValue("0"));
+        assertEquals("1", creator.exposeNormalizeDefaultValue("1"));
+        assertEquals("TRUE", creator.exposeNormalizeDefaultValue("TRUE"));
+        assertEquals("FALSE", creator.exposeNormalizeDefaultValue("false"));
+    }
+
+    @Test
     void commentModifySqlShouldCoverInlineAndSeparatedVariants() {
         CommentModifyExecutor creator = new CommentModifyExecutor();
 
@@ -1674,6 +1787,10 @@ class DDLAutoCoverageTest {
 
         String exposeExecutableSql(IDbType dbType, String sql) {
             return executableSql(dbType, sql);
+        }
+
+        String exposeNormalizeDefaultValue(String defaultValue) {
+            return normalizeDefaultValue(defaultValue);
         }
 
         boolean exposeDb2SequenceExists(Connection connection, String schema, TableInfo tableInfo, SequenceInfo sequence) throws SQLException {

@@ -125,6 +125,22 @@ class DDLAutoOceanbaseIntegrationTest extends DDLAutoExternalDatabaseIntegration
     }
 
     @Test
+    void oceanbaseShouldModifyColumnDefaultInSyncMode() throws Exception {
+        assertSyncModifyDefaultFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';"
+        );
+    }
+
+    @Test
+    void oceanbaseShouldDropColumnDefaultInSyncMode() throws Exception {
+        assertSyncDropDefaultFlow(
+                DATABASE,
+                "ALTER TABLE auto_sync_drop_default_user ALTER COLUMN username DROP DEFAULT;"
+        );
+    }
+
+    @Test
     void oceanbaseShouldModifyPrimaryKeyAutoIncrementInSyncMode() throws Exception {
         assertSyncModifyAutoIncrementFlow(
                 DATABASE,

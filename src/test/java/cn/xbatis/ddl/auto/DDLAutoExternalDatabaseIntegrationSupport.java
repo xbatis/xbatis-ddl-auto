@@ -46,6 +46,10 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
     private static final String SYNC_MODIFY_COMMENT_TABLE = "auto_sync_modify_comment_user";
 
+    private static final String SYNC_MODIFY_DEFAULT_TABLE = "auto_sync_modify_default_user";
+
+    private static final String SYNC_DROP_DEFAULT_TABLE = "auto_sync_drop_default_user";
+
     static void assertCreateUpdateFlow(DatabaseCase databaseCase,
                                        Class<?> v1Entity,
                                        Class<?> v2Entity,
@@ -462,6 +466,101 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
             assertTrue(exception.getMessage().contains("does not support MODIFY AUTO_INCREMENT"));
         } finally {
             dropTestTable(connection, SYNC_MODIFY_AUTO_ID_TABLE);
+        }
+    }
+
+    static void assertSyncModifyDefaultFlow(IDbType dbType, Connection connection, String expectedModifySql) throws Exception {
+        assertSyncModifyDefaultFlow(dbType, connection, expectedModifySql, SYNC_MODIFY_DEFAULT_TABLE,
+                SyncModifyDefaultUserV1.class, SyncModifyDefaultUserV2.class, true);
+    }
+
+    static void assertSyncModifyDefaultFlow(DatabaseCase databaseCase, String expectedModifySql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncModifyDefaultFlow(databaseCase.dbType, connection, expectedModifySql);
+        }
+    }
+
+    static void assertSyncDropDefaultFlow(IDbType dbType, Connection connection, String expectedDropSql) throws Exception {
+        assertSyncModifyDefaultFlow(dbType, connection, expectedDropSql, SYNC_DROP_DEFAULT_TABLE,
+                SyncDropDefaultUserV1.class, SyncDropDefaultUserV2.class, false);
+    }
+
+    static void assertSyncDropDefaultFlow(DatabaseCase databaseCase, String expectedDropSql) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertSyncDropDefaultFlow(databaseCase.dbType, connection, expectedDropSql);
+        }
+    }
+
+    private static void assertSyncModifyDefaultFlow(IDbType dbType,
+                                                    Connection connection,
+                                                    String expectedSql,
+                                                    String tableName,
+                                                    Class<?> v1Entity,
+                                                    Class<?> v2Entity,
+                                                    boolean expectDefaultPresent) throws Exception {
+        dropTestTable(connection, tableName);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(v1Entity)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, tableName));
+            assertTrue(columnExists(connection, tableName, "id"));
+            assertTrue(columnExists(connection, tableName, "username"));
+            assertNotNull(columnDefaultValue(connection, tableName, "username"),
+                    "Expected username column to have an initial default value");
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+
+            assertEquals(Collections.singletonList(expectedSql), syncExecutedSqlList);
+            String actualDefault = columnDefaultValue(connection, tableName, "username");
+            if (expectDefaultPresent) {
+                assertNotNull(actualDefault, "Expected username column default to be modified");
+                assertTrue(actualDefault.toUpperCase(Locale.ROOT).contains("NEW"),
+                        "Expected username column default to contain NEW, actual: " + actualDefault);
+            } else {
+                assertTrue(actualDefault == null || actualDefault.equals("NULL")  || actualDefault.trim().isEmpty(),
+                        "Expected username column default to be dropped, actual: " + actualDefault);
+            }
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(v2Entity)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync default modify flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, tableName);
+        }
+    }
+
+    static void assertSyncModifyDefaultIgnored(IDbType dbType, Connection connection) throws Exception {
+        dropTestTable(connection, SYNC_MODIFY_DEFAULT_TABLE);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(SyncModifyDefaultUserV1.class)
+                    .execute(connection);
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(SyncModifyDefaultUserV2.class)
+                    .execute(connection);
+
+            assertTrue(syncExecutedSqlList.isEmpty(),
+                    "Expected database to ignore default value modify: " + syncExecutedSqlList);
+        } finally {
+            dropTestTable(connection, SYNC_MODIFY_DEFAULT_TABLE);
         }
     }
 
@@ -1097,6 +1196,22 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
         return null;
     }
 
+    static String columnDefaultValue(Connection connection, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metadata = connection.getMetaData();
+        for (MetadataScope scope : metadataScopes(connection)) {
+            for (String tableCandidate : nameCandidates(tableName)) {
+                for (String columnCandidate : nameCandidates(columnName)) {
+                    try (ResultSet resultSet = metadata.getColumns(scope.catalog, scope.schema, tableCandidate, columnCandidate)) {
+                        if (resultSet.next()) {
+                            return resultSet.getString("COLUMN_DEF");
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     static boolean columnAutoIncrement(Connection connection, String tableName, String columnName) throws SQLException {
         DatabaseMetaData metadata = connection.getMetaData();
         for (MetadataScope scope : metadataScopes(connection)) {
@@ -1588,6 +1703,46 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
     @Table(SYNC_MODIFY_AUTO_ID_REVERSE_TABLE)
     static class SyncModifyAutoIdReverseUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_DEFAULT_TABLE)
+    static class SyncModifyDefaultUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, defaultValue = "'old'")
+        private String username;
+    }
+
+    @Table(SYNC_MODIFY_DEFAULT_TABLE)
+    static class SyncModifyDefaultUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, defaultValue = "'new'")
+        private String username;
+    }
+
+    @Table(SYNC_DROP_DEFAULT_TABLE)
+    static class SyncDropDefaultUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64, defaultValue = "'old'")
+        private String username;
+    }
+
+    @Table(SYNC_DROP_DEFAULT_TABLE)
+    static class SyncDropDefaultUserV2 {
 
         @TableId(value = IdAutoType.NONE)
         private Long id;
