@@ -170,6 +170,7 @@ List<String> sqlList = DDLAuto.of(DbType.MYSQL)
 - 表已存在且是 `CREATE` 模式：返回空列表
 - 表已存在且是 `UPDATE` 模式：只返回缺失字段的 `ALTER TABLE ... ADD COLUMN ...` 及附属 DDL，以及缺失索引的 `CREATE INDEX`
 - 表已存在且是 `SYNC` 模式：返回缺失字段的 `ALTER TABLE ... ADD COLUMN ...`、缺失索引的 `CREATE INDEX`，以及多余字段/索引的删除 DDL
+- 新增字段时，MySQL/MariaDB/OceanBase 会按实体字段顺序生成 `AFTER <列名>` 子句（多列新增合并为单条语句且逐列追加 `AFTER`），使物理表列顺序与实体一致
 
 也可以使用底层构建器生成单个字段的新增列 SQL：
 

@@ -32,15 +32,16 @@ class DDLAutoMariadbIntegrationTest extends DDLAutoExternalDatabaseIntegrationSu
                 "idx_mdb_itg_user_name",
                 "idx_mdb_itg_email",
                 "idx_mdb_itg_name_ct",
-                "ALTER TABLE auto_mariadb_itg_user ADD COLUMN email VARCHAR(128);"
+                "ALTER TABLE auto_mariadb_itg_user ADD COLUMN email VARCHAR(128) AFTER created_at;"
         );
     }
 
     @Test
-    void mariadbShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+    void mariadbShouldAddMultipleMissingColumnsFollowingEntityOrder() throws Exception {
         assertMultiColumnAddColumnFlow(
                 DATABASE,
-                "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+                "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER AFTER username, "
+                        + "ADD COLUMN email VARCHAR(128) AFTER age;"
         );
     }
 
@@ -108,7 +109,7 @@ class DDLAutoMariadbIntegrationTest extends DDLAutoExternalDatabaseIntegrationSu
                 "auto_sync_user",
                 "DROP INDEX idx_sync_legacy_code ON auto_sync_user;",
                 "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
-                "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128);",
+                "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128) AFTER username;",
                 "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
         );
     }

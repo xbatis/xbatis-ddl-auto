@@ -1,5 +1,7 @@
 package cn.xbatis.ddl.auto;
 
+import cn.xbatis.core.db.reflect.TableInfo;
+import cn.xbatis.core.db.reflect.Tables;
 import cn.xbatis.core.mybatis.typeHandler.EnumSupport;
 import cn.xbatis.db.IdAutoType;
 import cn.xbatis.db.annotations.ColumnDefinition;
@@ -16,6 +18,8 @@ import java.sql.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -257,6 +261,22 @@ class DDLAutoTest {
                 ),
                 builder.addColumnSqlList(DbType.SQLITE, UpdateMultiUserV2.class,
                         columns(DbType.SQLITE, UpdateMultiUserV2.class, "age", "email")));
+    }
+
+    @Test
+    void mysqlShouldAddMissingColumnsWithAfterClausesFollowingEntityOrder() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+        TableInfo tableInfo = Tables.get(UpdateMultiUserV2.class);
+        List<ColumnInfo> addColumns = columns(DbType.MYSQL, UpdateMultiUserV2.class, "age", "email");
+
+        assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER AFTER username, "
+                        + "ADD COLUMN email VARCHAR(128) AFTER age;",
+                builder.addColumnSqlList(DbType.MYSQL, tableInfo, addColumns, "auto_update_multi_user",
+                        new HashSet<>(Arrays.asList("id", "username"))).get(0));
+
+        // 未提供物理表列信息时不生成 AFTER，保持原有合并语句
+        assertEquals("ALTER TABLE auto_update_multi_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);",
+                builder.addColumnSqlList(DbType.MYSQL, UpdateMultiUserV2.class, addColumns).get(0));
     }
 
     @Test

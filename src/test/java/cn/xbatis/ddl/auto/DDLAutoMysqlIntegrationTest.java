@@ -58,7 +58,7 @@ class DDLAutoMysqlIntegrationTest {
                         .add(MysqlIntegrationUserV2.class)
                         .execute(connection);
 
-                assertTrue(updateExecutedSqlList.contains("ALTER TABLE " + TEST_TABLE + " ADD COLUMN email VARCHAR(128);"));
+                assertTrue(updateExecutedSqlList.contains("ALTER TABLE " + TEST_TABLE + " ADD COLUMN email VARCHAR(128) AFTER created_at;"));
                 assertTrue(updateExecutedSqlList.contains("CREATE INDEX idx_mysql_integration_email ON " + TEST_TABLE + " (email);"));
                 assertTrue(updateExecutedSqlList.contains("CREATE INDEX idx_mysql_integration_username_created_at ON "
                         + TEST_TABLE + " (username ASC, created_at DESC);"));
@@ -98,12 +98,13 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
-    void mysqlShouldAddMultipleMissingColumnsInSingleAlter() throws Exception {
+    void mysqlShouldAddMultipleMissingColumnsFollowingEntityOrder() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertMultiColumnAddColumnFlow(
                     DbType.MYSQL,
                     connection,
-                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER, ADD COLUMN email VARCHAR(128);"
+                    "ALTER TABLE auto_multi_column_add_user ADD COLUMN age INTEGER AFTER username, "
+                            + "ADD COLUMN email VARCHAR(128) AFTER age;"
             );
         }
     }
@@ -191,7 +192,7 @@ class DDLAutoMysqlIntegrationTest {
                     "auto_sync_user",
                     "DROP INDEX idx_sync_legacy_code ON auto_sync_user;",
                     "ALTER TABLE auto_sync_user DROP COLUMN legacy_code;",
-                    "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128);",
+                    "ALTER TABLE auto_sync_user ADD COLUMN email VARCHAR(128) AFTER username;",
                     "CREATE INDEX idx_sync_email ON auto_sync_user (email);"
             );
         }

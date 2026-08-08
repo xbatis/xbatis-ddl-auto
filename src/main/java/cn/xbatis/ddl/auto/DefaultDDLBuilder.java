@@ -112,6 +112,23 @@ public class DefaultDDLBuilder implements DDLBuilder {
         return new DDLContext(dbType, tableInfo.getType(), tableInfo, columns, tableName);
     }
 
+    /**
+     * 使用已解析列元数据、物理表名和物理表已有列名创建 DDL 构建上下文。
+     *
+     * @param existsColumnNames 物理表中已存在的列名集合，用于生成 MySQL/MariaDB 新增列的 AFTER 子句
+     */
+    protected DDLContext createContext(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> columns, String tableName, Collection<String> existsColumnNames) {
+        Objects.requireNonNull(dbType, "dbType");
+        Objects.requireNonNull(tableInfo, "tableInfo");
+        Objects.requireNonNull(columns, "columns");
+        Objects.requireNonNull(tableName, "tableName");
+        Objects.requireNonNull(existsColumnNames, "existsColumnNames");
+        validateDbType(dbType);
+
+        return new DDLContext(dbType, tableInfo.getType(), tableInfo, columns, tableName,
+                existsColumnNames, getColumns(dbType, tableInfo));
+    }
+
     @Override
     public List<String> addColumnSqlList(IDbType dbType, Class<?> entityClass, List<ColumnInfo> columns) {
         return buildAddColumnSqlList(dbType, entityClass, columns);
@@ -125,6 +142,11 @@ public class DefaultDDLBuilder implements DDLBuilder {
     @Override
     public List<String> addColumnSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> columns, String tableName) {
         return buildAddColumnSqlList(dbType, tableInfo, columns, tableName);
+    }
+
+    @Override
+    public List<String> addColumnSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> columns, String tableName, Collection<String> existsColumnNames) {
+        return buildAddColumnSqlList(dbType, tableInfo, columns, tableName, existsColumnNames);
     }
 
     @Override
@@ -386,6 +408,7 @@ public class DefaultDDLBuilder implements DDLBuilder {
             ddl.append("COLUMN ");
         }
         ddl.append(buildColumnSql(context, column, false, supportsInlineUniqueInAddColumn(context.dbType)).trim());
+        ddl.append(buildAddColumnAfterClause(context, column));
         ddl.append(";");
         return ddl.toString();
     }
@@ -686,16 +709,31 @@ public class DefaultDDLBuilder implements DDLBuilder {
      * @return ALTER TABLE ADD COLUMN 及附属 DDL
      */
     public List<String> buildAddColumnSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> addColumns, String tableName) {
+        return buildAddColumnSqlList(dbType, tableInfo, addColumns, tableName, Collections.emptySet());
+    }
+
+    /**
+     * 根据实体字段批量生成指定物理表的新增列 SQL 列表。
+     *
+     * @param dbType            数据库类型
+     * @param tableInfo         xbatis 表元数据
+     * @param addColumns        需要新增的列元数据集合
+     * @param tableName         物理表名
+     * @param existsColumnNames 物理表中已存在的列名集合，用于生成 MySQL/MariaDB 的 AFTER 子句
+     * @return ALTER TABLE ADD COLUMN 及附属 DDL
+     */
+    public List<String> buildAddColumnSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> addColumns, String tableName, Collection<String> existsColumnNames) {
         Objects.requireNonNull(dbType, "dbType");
         Objects.requireNonNull(tableInfo, "tableInfo");
         Objects.requireNonNull(addColumns, "addColumns");
         Objects.requireNonNull(tableName, "tableName");
+        Objects.requireNonNull(existsColumnNames, "existsColumnNames");
 
         if (!DDLTableNameResolverUtil.isTable(tableInfo) || addColumns.isEmpty()) {
             return Collections.emptyList();
         }
 
-        DDLContext context = createContext(dbType, tableInfo, addColumns, tableName);
+        DDLContext context = createContext(dbType, tableInfo, addColumns, tableName, existsColumnNames);
         List<String> sqlList = new ArrayList<>(addColumns.size());
         if (context.columns.size() == 1 || !supportsMultipleAddColumns(context.dbType)) {
             for (ColumnInfo column : context.columns) {
@@ -1051,6 +1089,9 @@ public class DefaultDDLBuilder implements DDLBuilder {
 
     /**
      * 追加 PostgreSQL/MySQL 风格的重复 ADD COLUMN 子句。
+     * <p>
+     * MySQL/MariaDB/OceanBase 的每个 ADD COLUMN 后追加 AFTER 子句，保证合并的单条 ALTER
+     * 中物理表列顺序与实体字段顺序一致。
      */
     protected void appendRepeatedAddColumnDefinitions(StringBuilder ddl, DDLContext context) {
         for (int i = 0; i < context.columns.size(); i++) {
@@ -1062,6 +1103,7 @@ public class DefaultDDLBuilder implements DDLBuilder {
             }
             ddl.append(buildColumnSql(context, context.columns.get(i), false,
                     supportsInlineUniqueInAddColumn(context.dbType)).trim());
+            ddl.append(buildAddColumnAfterClause(context, context.columns.get(i)));
         }
     }
 
@@ -1965,6 +2007,16 @@ public class DefaultDDLBuilder implements DDLBuilder {
 
         private final List<ColumnInfo> columns;
 
+        /**
+         * 物理表中已存在的列名集合，用于生成 MySQL/MariaDB 新增列的 AFTER 子句。
+         */
+        private final Set<String> existsColumnNames;
+
+        /**
+         * 实体完整列顺序，用于计算新增列在实体列顺序中的前一列。
+         */
+        private final List<ColumnInfo> allColumns;
+
         private final int idColumnCount;
 
         private Map<String, ColumnInfo> columnMap;
@@ -1974,6 +2026,11 @@ public class DefaultDDLBuilder implements DDLBuilder {
         }
 
         DDLContext(IDbType dbType, Class<?> entityClass, TableInfo tableInfo, List<ColumnInfo> columns, String tableName) {
+            this(dbType, entityClass, tableInfo, columns, tableName, Collections.emptySet(), columns);
+        }
+
+        DDLContext(IDbType dbType, Class<?> entityClass, TableInfo tableInfo, List<ColumnInfo> columns, String tableName,
+                   Collection<String> existsColumnNames, List<ColumnInfo> allColumns) {
             this.dbType = Objects.requireNonNull(dbType, "dbType");
             this.entityClass = entityClass;
             this.tableInfo = Objects.requireNonNull(tableInfo, "tableInfo");
@@ -1982,6 +2039,8 @@ public class DefaultDDLBuilder implements DDLBuilder {
             for (ColumnInfo column : columns) {
                 Objects.requireNonNull(column, "column");
             }
+            this.existsColumnNames = existsColumnNames == null ? Collections.emptySet() : new HashSet<>(existsColumnNames);
+            this.allColumns = allColumns == null ? columns : allColumns;
             this.idColumnCount = getIdColumnCount(columns);
         }
 
@@ -2291,6 +2350,49 @@ public class DefaultDDLBuilder implements DDLBuilder {
      */
     protected boolean supportsAddColumnKeyword(IDbType dbType) {
         return dialect.supportsAddColumnKeyword(dbType);
+    }
+
+    /**
+     * 判断数据库是否支持在 ADD COLUMN 中追加 AFTER 子句指定列位置。
+     */
+    protected boolean supportsAddColumnAfterClause(IDbType dbType) {
+        return isMysql(dbType);
+    }
+
+    /**
+     * 生成 MySQL/MariaDB 新增列时的 AFTER 子句，使物理表列顺序与实体字段顺序一致。
+     * <p>
+     * 参照列为实体列顺序中该新增列的前一列；仅当参照列已存在于物理表，或与当前新增列处于
+     * 同一批次（按生成顺序先执行）时才会生成 AFTER 子句。未提供物理表列信息时不会生成 AFTER，
+     * 避免引用未知列导致 SQL 执行失败。
+     */
+    protected String buildAddColumnAfterClause(DDLContext context, ColumnInfo column) {
+        if (!supportsAddColumnAfterClause(context.dbType)) {
+            return "";
+        }
+        if (context.existsColumnNames.isEmpty()) {
+            return "";
+        }
+        List<ColumnInfo> allColumns = context.allColumns;
+        if (allColumns == null || allColumns.isEmpty()) {
+            return "";
+        }
+        String columnName = column.getName();
+        int index = -1;
+        for (int i = 0; i < allColumns.size(); i++) {
+            if (allColumns.get(i).getName().equals(columnName)) {
+                index = i;
+                break;
+            }
+        }
+        if (index <= 0) {
+            return "";
+        }
+        String prevColumnName = allColumns.get(index - 1).getName();
+        if (!context.existsColumnNames.contains(prevColumnName) && !context.columnMap().containsKey(prevColumnName)) {
+            return "";
+        }
+        return " AFTER " + context.dbType.wrap(prevColumnName);
     }
 
     /**

@@ -1581,7 +1581,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (missingColumns.isEmpty()) {
             return Collections.emptyList();
         }
-        List<String> sqlList = ddlBuilder.addColumnSqlList(dbType, tableInfo, missingColumns, tableName);
+        List<String> sqlList = ddlBuilder.addColumnSqlList(dbType, tableInfo, missingColumns, tableName, existsColumnNames);
         if (databaseMetadata != null) {
             databaseMetadata.addColumns(tableInfo, tableName, missingColumns);
         }

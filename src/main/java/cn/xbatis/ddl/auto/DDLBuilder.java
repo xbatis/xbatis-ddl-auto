@@ -95,6 +95,21 @@ public interface DDLBuilder {
     }
 
     /**
+     * 为指定物理表批量新增字段生成 ALTER TABLE ADD COLUMN SQL 列表。
+     *
+     * @param dbType            数据库类型
+     * @param tableInfo         xbatis 表元数据
+     * @param columns           需要新增的列元数据集合
+     * @param tableName         物理表名
+     * @param existsColumnNames 物理表中已存在的列名集合，用于生成 MySQL/MariaDB 新增列的 AFTER 子句
+     * @return 新增字段 SQL 列表
+     */
+    default List<String> addColumnSqlList(IDbType dbType, TableInfo tableInfo, List<ColumnInfo> columns, String tableName, Collection<String> existsColumnNames) {
+        Objects.requireNonNull(existsColumnNames, "existsColumnNames");
+        return addColumnSqlList(dbType, tableInfo, columns, tableName);
+    }
+
+    /**
      * 为指定物理表批量生成删除字段 SQL 列表。
      *
      * @param dbType      数据库类型
