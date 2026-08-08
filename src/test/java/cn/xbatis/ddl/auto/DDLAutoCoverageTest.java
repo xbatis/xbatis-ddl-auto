@@ -952,6 +952,12 @@ class DDLAutoCoverageTest {
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CURRENT_TIMESTAMP"));
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("current_timestamp()"));
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("now()"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("pg_systimestamp()"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CURRENT_TIMESTAMP(6)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("localtimestamp(6)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("('now'::text)::timestamp without time zone"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("('now'::text)::timestamp(6) with time zone"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("('now'::text)::timestamp(6) without time zone"));
         assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("(CURRENT_DATE)"));
         assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("curdate()"));
         assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("curtime()"));
@@ -962,6 +968,16 @@ class DDLAutoCoverageTest {
         assertEquals("1", creator.exposeNormalizeDefaultValue("1"));
         assertEquals("TRUE", creator.exposeNormalizeDefaultValue("TRUE"));
         assertEquals("FALSE", creator.exposeNormalizeDefaultValue("false"));
+    }
+
+    @Test
+    void syncModeShouldNotTreatOracleTimestampPrecisionAsTypeChange() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        List<String> sqlList = creator.exposeSyncModifyDefaultOracleSqlList();
+        assertEquals(Arrays.asList(
+                "ALTER TABLE auto_sync_modify_default_user MODIFY (username DEFAULT 'new');",
+                "ALTER TABLE auto_sync_modify_default_user MODIFY (create_time DEFAULT CURRENT_TIMESTAMP);"
+        ), sqlList);
     }
 
     @Test
@@ -1774,6 +1790,22 @@ class DDLAutoCoverageTest {
             databaseMetadata.addColumn("catalog", null, tableName, "id", Types.BIGINT, "BIGINT", 0, 0,
                     DatabaseMetaData.columnNoNulls, null, existingAutoIncrement, null, null);
             return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
+        List<String> exposeSyncModifyDefaultOracleSqlList() {
+            TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "auto_sync_modify_default_user");
+            databaseMetadata.addPrimaryKey("catalog", null, "auto_sync_modify_default_user", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "id", Types.BIGINT, "NUMBER", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "username", Types.VARCHAR, "VARCHAR2", 64, 0,
+                    DatabaseMetaData.columnNullable, "'old'", null, null, null);
+            // Oracle JDBC 对 TIMESTAMP 列返回 TIMESTAMP(6)，不应被判定为类型变更；
+            // create_time 为 V1 状态（无默认值），同步后应生成 DEFAULT CURRENT_TIMESTAMP
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "create_time", Types.TIMESTAMP, "TIMESTAMP(6)", 6, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.ORACLE, entityMetadata(DbType.ORACLE, tableInfo), "auto_sync_modify_default_user", databaseMetadata);
         }
 
         boolean exposeDatabaseMetadataSchemaCatalogFallback(TableInfo tableInfo) {
