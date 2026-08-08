@@ -8,7 +8,9 @@ import db.sql.api.IDbType;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -38,6 +40,8 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
     private static final String DATE_DEFAULT_TABLE = "auto_date_default_user";
 
     private static final String DATE_TIME_DEFAULT_TABLE = "auto_datetime_default_user";
+
+    private static final String TYPE_LENGTH_DEFAULT_TABLE = "auto_type_length_default_user";
 
     private static final String SYNC_MODIFY_TABLE = "auto_sync_modify_user";
 
@@ -562,6 +566,63 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                     "Expected database to ignore default value modify: " + syncExecutedSqlList);
         } finally {
             dropTestTable(connection, SYNC_MODIFY_DEFAULT_TABLE);
+        }
+    }
+
+    static void assertTypeLengthDefaultCombinationFlow(DatabaseCase databaseCase, String... expectedModifySqlList) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertTypeLengthDefaultCombinationFlow(databaseCase.dbType, connection, expectedModifySqlList);
+        }
+    }
+
+    static void assertTypeLengthDefaultCombinationFlow(IDbType dbType,
+                                                       Connection connection,
+                                                       String... expectedModifySqlList) throws Exception {
+        dropTestTable(connection, TYPE_LENGTH_DEFAULT_TABLE);
+        try {
+            DDLTestPrinter.ddl(dbType)
+                    .builder(new DefaultDDLBuilder())
+                    .add(TypeLengthDefaultUserV1.class)
+                    .execute(connection);
+
+            assertTrue(tableExists(connection, TYPE_LENGTH_DEFAULT_TABLE));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "nickname"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "large_text"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "amount"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "enabled"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "biz_date"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "sign_date"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "start_time"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "created_at"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "event_at"));
+            assertTrue(columnExists(connection, TYPE_LENGTH_DEFAULT_TABLE, "remark"));
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(TypeLengthDefaultUserV2.class)
+                    .execute(connection);
+
+            assertEquals(Arrays.asList(expectedModifySqlList), syncExecutedSqlList);
+
+            if (expectedModifySqlList.length > 0) {
+                String actualDefault = columnDefaultValue(connection, TYPE_LENGTH_DEFAULT_TABLE, "nickname");
+                assertNotNull(actualDefault, "Expected nickname column default to be modified");
+                assertTrue(actualDefault.toUpperCase(Locale.ROOT).contains("NEW"),
+                        "Expected nickname column default to contain NEW, actual: " + actualDefault);
+            }
+
+            List<String> verifyExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, verifyExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(TypeLengthDefaultUserV2.class)
+                    .execute(connection);
+            assertTrue(verifyExecutedSqlList.isEmpty(),
+                    "Expected no DDL after sync type/length/default combination flow already executed: " + verifyExecutedSqlList);
+        } finally {
+            dropTestTable(connection, TYPE_LENGTH_DEFAULT_TABLE);
         }
     }
 
@@ -1736,6 +1797,82 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @TableField(defaultValue = "{NOW}")
         private LocalDateTime createTime;
+    }
+
+    @Table(TYPE_LENGTH_DEFAULT_TABLE)
+    static class TypeLengthDefaultUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 32, defaultValue = "'guest'")
+        private String nickname;
+
+        @ColumnDefinition(length = 5000)
+        private String largeText;
+
+        @ColumnDefinition(precision = 12, scale = 3)
+        @TableField(defaultValue = "1.5")
+        private BigDecimal amount;
+
+        @TableField(defaultValue = "1")
+        private Boolean enabled;
+
+        @TableField
+        private LocalDate bizDate;
+
+        @TableField
+        private LocalDate signDate;
+
+        @TableField
+        private LocalTime startTime;
+
+        @TableField
+        private LocalDateTime createdAt;
+
+        @TableField
+        private Instant eventAt;
+
+        @TableField
+        private String remark;
+    }
+
+    @Table(TYPE_LENGTH_DEFAULT_TABLE)
+    static class TypeLengthDefaultUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 32, defaultValue = "'new'")
+        private String nickname;
+
+        @ColumnDefinition(length = 5000)
+        private String largeText;
+
+        @ColumnDefinition(precision = 12, scale = 3)
+        @TableField(defaultValue = "2.5")
+        private BigDecimal amount;
+
+        @TableField(defaultValue = "1")
+        private Boolean enabled;
+
+        @TableField(defaultValue = "{TODAY}")
+        private LocalDate bizDate;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDate signDate;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalTime startTime;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDateTime createdAt;
+
+        @TableField(defaultValue = "{NOW}")
+        private Instant eventAt;
+
+        @TableField
+        private String remark;
     }
 
     @Table(SYNC_DROP_DEFAULT_TABLE)

@@ -232,6 +232,51 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldSyncTypeLengthAndDefaultCombinations() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertTypeLengthDefaultCombinationFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'nickname', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_nickname DEFAULT 'new' FOR nickname;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'amount', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_amount DEFAULT 2.5 FOR amount;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'biz_date', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_biz_date DEFAULT (CAST(GETDATE() AS DATE)) FOR biz_date;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'sign_date', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_sign_date DEFAULT (CAST(GETDATE() AS DATE)) FOR sign_date;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'start_time', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_start_time DEFAULT (CAST(GETDATE() AS TIME)) FOR start_time;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'created_at', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_created_at DEFAULT SYSDATETIME() FOR created_at;",
+                    "DECLARE @defaultConstraintName sysname; SELECT @defaultConstraintName = dc.name "
+                            + "FROM sys.default_constraints dc WHERE dc.parent_object_id = OBJECT_ID(N'auto_type_length_default_user') "
+                            + "AND dc.parent_column_id = COLUMNPROPERTY(dc.parent_object_id, N'event_at', 'ColumnId'); "
+                            + "IF @defaultConstraintName IS NOT NULL EXEC(N'ALTER TABLE [auto_type_length_default_user] DROP CONSTRAINT [' + @defaultConstraintName + ']'); "
+                            + "ALTER TABLE auto_type_length_default_user ADD CONSTRAINT DF_auto_type_length_default_user_event_at DEFAULT SYSDATETIMEOFFSET() FOR event_at;"
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(

@@ -14,6 +14,8 @@ import javax.sql.DataSource;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.sql.*;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -1843,7 +1845,87 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         String expectedDefault = normalizeDefaultValue(column.getDefinition().defaultValue());
         String actualDefault = normalizeDefaultValue(columnMetadata.getColumnDefault());
-        return !expectedDefault.equals(actualDefault);
+        if (expectedDefault.equals(actualDefault)) {
+            return false;
+        }
+        return !isEquivalentDynamicDefault(column, column.getDefinition().defaultValue(), columnMetadata.getColumnDefault());
+    }
+
+    /**
+     * 当前时间类动态默认值（CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP）语义等价兜底比较。
+     * <p>
+     * 各数据库（尤其 openGauss/PostgreSQL）对同一动态默认值的存储文本差异很大，
+     * 例如 CURRENT_DATE 可能存储为 ('now'::text)::date、'now'::date、now()::date、CURRENT_DATE 等，
+     * 无法穷举所有文本形态。此处对“双方都是动态当前时间表达式”的情况按语义类别比较，
+     * 避免把同一个默认值误判为变更而反复生成 DDL。
+     */
+    private boolean isEquivalentDynamicDefault(ColumnInfo column, String expectedRaw, String actualRaw) {
+        if (isBlank(expectedRaw) || isBlank(actualRaw)) {
+            return false;
+        }
+        String expected = expectedRaw.toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
+        String actual = actualRaw.toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
+        if (!isDynamicNowDefault(expected) || !isDynamicNowDefault(actual)) {
+            return false;
+        }
+        String expectedKind = dynamicNowDefaultKind(expected);
+        String actualKind = dynamicNowDefaultKind(actual);
+        if ("OTHER".equals(expectedKind) || "OTHER".equals(actualKind)) {
+            return false;
+        }
+        if (expectedKind.equals(actualKind)) {
+            return true;
+        }
+        // 时间戳表达式在 date/time 类型列上会被隐式转换为当前日期/时间，与 CURRENT_DATE/CURRENT_TIME 语义一致
+        Class<?> javaType = column.getJavaType();
+        boolean dateOnlyColumn = javaType == LocalDate.class || javaType == java.sql.Date.class;
+        boolean timeOnlyColumn = javaType == LocalTime.class || javaType == Time.class;
+        if (dateOnlyColumn || timeOnlyColumn){
+            if (expectedRaw.equals("{NOW}") && (actualRaw.contains("TIME") || actualRaw.contains("NOW") || actualRaw.contains("DATE"))){
+                return false;
+            }
+        }
+        return ("DATE".equals(expectedKind) && "TIMESTAMP".equals(actualKind) && dateOnlyColumn)
+                || ("TIME".equals(expectedKind) && "TIMESTAMP".equals(actualKind) && timeOnlyColumn);
+    }
+
+    private boolean isDynamicNowDefault(String raw) {
+        return raw.contains("TEXT_DATE") || raw.contains("TEXT_TIME") || raw.contains("TEXT_TIMESTAMP")
+                || raw.contains("'NOW'") || raw.contains("NOW()")
+                || raw.contains("PG_SYSTIMESTAMP") || raw.contains("SYSTIMESTAMP")
+                || raw.contains("CURRENT_TIMESTAMP") || raw.contains("CURRENT TIMESTAMP")
+                || raw.contains("CURRENT_DATE") || raw.contains("CURRENT DATE")
+                || raw.contains("CURRENT_TIME") || raw.contains("CURRENT TIME")
+                || raw.contains("LOCALTIMESTAMP") || raw.contains("LOCALTIME")
+                || raw.contains("SYSDATE") || raw.contains("CURDATE") || raw.contains("CURTIME")
+                || raw.contains("GETDATE") || raw.contains("SYSDATETIME") || raw.contains("TODAY()");
+    }
+
+    private String dynamicNowDefaultKind(String raw) {
+        if (raw.matches(".*::\\s*TIMESTAMP\\b.*") || raw.contains("AS TIMESTAMP")
+                || raw.contains("TEXT_TIMESTAMPTZ") || raw.contains("TEXT_TIMESTAMP")) {
+            return "TIMESTAMP";
+        }
+        if (raw.matches(".*::\\s*DATE\\b.*") || raw.contains("AS DATE")
+                || raw.contains("CURRENT_DATE") || raw.contains("CURRENT DATE")
+                || raw.contains("CURDATE") || raw.contains("TODAY()") || raw.contains("TEXT_DATE")) {
+            return "DATE";
+        }
+        if (raw.matches(".*::\\s*TIME\\b.*") || raw.contains("AS TIME")) {
+            return "TIME";
+        }
+        // 注意 CURRENT_TIMESTAMP 包含 CURRENT_TIME 前缀、LOCALTIMESTAMP 包含 LOCALTIME 前缀，必须先判断时间戳关键字
+        if (raw.contains("CURRENT_TIMESTAMP") || raw.contains("CURRENT TIMESTAMP")
+                || raw.contains("LOCALTIMESTAMP") || raw.contains("NOW()")
+                || raw.contains("PG_SYSTIMESTAMP") || raw.contains("SYSTIMESTAMP")
+                || raw.contains("SYSDATE") || raw.contains("GETDATE") || raw.contains("SYSDATETIME")) {
+            return "TIMESTAMP";
+        }
+        if (raw.contains("CURRENT_TIME") || raw.contains("CURRENT TIME")
+                || raw.contains("CURTIME") || raw.contains("LOCALTIME") || raw.contains("TEXT_TIME")) {
+            return "TIME";
+        }
+        return "OTHER";
     }
 
     /**
@@ -1859,8 +1941,22 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 .replaceAll("^\\((.*)\\)$", "$1")
                 // SQL Server 字符串默认值带 N 前缀
                 .replaceAll("^N'", "'")
-                // openGauss/PostgreSQL 将 CURRENT_TIMESTAMP(n)/LOCALTIMESTAMP 存储为 ('now'::text)::timestamp[(n)] [with|without] time zone
-                .replaceAll("\\(['\"]NOW['\"]::TEXT\\)::TIMESTAMP(?:\\(\\d+\\))?(?:\\s+(?:WITH|WITHOUT)\\s+TIME\\s+ZONE)?", "CURRENT_TIMESTAMP")
+                // openGauss/PostgreSQL 将 CURRENT_TIMESTAMP(n)/LOCALTIMESTAMP 存储为 ('now'::text)::timestamp[(n)] [with|without] time zone，
+                // 也存在 now()/pg_systimestamp()/'now'::text 带 ::timestamp 强转的变体，统一为 CURRENT_TIMESTAMP
+                .replaceAll("(?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|\\(['\"]NOW['\"]::TEXT\\)|['\"]NOW['\"]|\\(['\"]NOW['\"]\\))\\s*::\\s*TIMESTAMP(?:\\(\\d+\\))?(?:\\s+(?:WITH|WITHOUT)\\s+TIME\\s+ZONE)?", "CURRENT_TIMESTAMP")
+                // CURRENT_DATE 存储为 ('now'::text)::date / now()::date / pg_systimestamp()::date / 'now'::date 等
+                .replaceAll("(?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|\\(['\"]NOW['\"]::TEXT\\)|['\"]NOW['\"]|\\(['\"]NOW['\"]\\))\\s*::\\s*DATE", "CURRENT_DATE")
+                // CURRENT_TIME(n) 存储为 ('now'::text)::time[(n)] [with|without] time zone / now()::time / 'now'::time 等
+                .replaceAll("(?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|\\(['\"]NOW['\"]::TEXT\\)|['\"]NOW['\"]|\\(['\"]NOW['\"]\\))\\s*::\\s*TIME(?:\\(\\d+\\))?(?:\\s+(?:WITH|WITHOUT)\\s+TIME\\s+ZONE)?", "CURRENT_TIME")
+                // CAST 强转形态：CAST('now' AS date) / CAST(now() AS timestamp) 等
+                .replaceAll("CAST\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"])\\s*AS\\s*TIMESTAMP(?:\\(\\d+\\))?(?:\\s+(?:WITH|WITHOUT)\\s+TIME\\s+ZONE)?\\)", "CURRENT_TIMESTAMP")
+                .replaceAll("CAST\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"])\\s*AS\\s*DATE\\)", "CURRENT_DATE")
+                .replaceAll("CAST\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"])\\s*AS\\s*TIME(?:\\(\\d+\\))?(?:\\s+(?:WITH|WITHOUT)\\s+TIME\\s+ZONE)?\\)", "CURRENT_TIME")
+                // openGauss 将 CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP 存储为 TEXT_DATE/TEXT_TIME/TEXT_TIMESTAMP('now'::text) 函数形态
+                .replaceAll("TEXT_DATE\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|['\"]NOW['\"])\\s*\\)", "CURRENT_DATE")
+                .replaceAll("TEXT_TIME\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|['\"]NOW['\"])\\s*\\)", "CURRENT_TIME")
+                .replaceAll("TEXT_TIMESTAMPTZ\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|['\"]NOW['\"])\\s*\\)", "CURRENT_TIMESTAMP")
+                .replaceAll("TEXT_TIMESTAMP\\s*\\((?:NOW\\(\\)|PG_SYSTIMESTAMP\\(\\)|['\"]NOW['\"]::TEXT|['\"]NOW['\"])\\s*\\)", "CURRENT_TIMESTAMP")
                 // PostgreSQL 系默认值带 ::类型 转换后缀
                 .replaceAll("::[\\w\\s.]+$", "")
                 .replaceAll("^'(.*)'$", "$1")
@@ -1870,8 +1966,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 .replaceAll("(?i)(CURRENT_TIMESTAMP|NOW|LOCALTIMESTAMP)\\(\\)", "CURRENT_TIMESTAMP")
                 .replaceAll("(?i)(CURRENT_TIMESTAMP|LOCALTIMESTAMP)\\(\\d+\\)", "CURRENT_TIMESTAMP")
                 .replaceAll("(?i)PG_SYSTIMESTAMP\\(\\)", "CURRENT_TIMESTAMP")
-                .replaceAll("(?i)(CURRENT_DATE|CURDATE|TODAY)\\(\\)", "CURRENT_DATE")
-                .replaceAll("(?i)(CURRENT_TIME|CURTIME)\\(\\)", "CURRENT_TIME")
+                .replaceAll("(?i)(CURRENT_DATE|CURDATE|TODAY)(?:\\(\\d*\\))?", "CURRENT_DATE")
+                .replaceAll("(?i)(CURRENT_TIME|CURTIME)(?:\\(\\d*\\))?", "CURRENT_TIME")
                 .replaceAll("(?i)(CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME)(?:\\s+(?:WITH|WITHOUT)\\s+TIME\\s+ZONE)?", "$1")
                 .replaceAll("\\s+", " ")
                 .trim();
@@ -2064,6 +2160,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             normalized = "TIMESTAMP" + normalized.substring("TIMESTAMP WITHOUT TIME ZONE".length());
         } else if (normalized.startsWith("TIMESTAMP WITH TIME ZONE")) {
             normalized = "TIMESTAMP WITH TIME ZONE" + normalized.substring("TIMESTAMP WITH TIME ZONE".length());
+        } else if (normalized.startsWith("TIMESTAMPTZ")) {
+            // Kingbase/PostgreSQL 系 JDBC 对 timestamptz 返回 TIMESTAMPTZ，与实体侧 TIMESTAMP WITH TIME ZONE 语义等价
+            normalized = "TIMESTAMP WITH TIME ZONE" + normalized.substring("TIMESTAMPTZ".length());
         }
         return normalized;
     }
@@ -2111,6 +2210,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         if (normalized.startsWith("TIMESTAMP WITHOUT TIME ZONE")) {
             return "TIMESTAMP";
+        }
+        if (normalized.startsWith("TIMESTAMPTZ")) {
+            return "TIMESTAMP WITH TIME ZONE";
         }
         return normalized;
     }

@@ -284,6 +284,23 @@ class DDLAutoKingbaseIntegrationTest extends DDLAutoExternalDatabaseIntegrationS
     }
 
     @Test
+    void kingbaseShouldSyncTypeLengthAndDefaultCombinations() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertTypeLengthDefaultCombinationFlow(
+                    DbType.KING_BASE,
+                    connection,
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN nickname SET DEFAULT 'new';",
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN amount SET DEFAULT 2.5;",
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN biz_date SET DEFAULT CURRENT_DATE;",
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN sign_date SET DEFAULT CURRENT_DATE;",
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN start_time SET DEFAULT CURRENT_TIME;",
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;",
+                    "ALTER TABLE auto_type_length_default_user ALTER COLUMN event_at SET DEFAULT CURRENT_TIMESTAMP;"
+            );
+        }
+    }
+
+    @Test
     void kingbaseShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertSyncDropDefaultFlow(

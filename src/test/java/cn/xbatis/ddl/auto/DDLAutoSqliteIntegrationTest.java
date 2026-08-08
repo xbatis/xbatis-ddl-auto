@@ -129,6 +129,14 @@ class DDLAutoSqliteIntegrationTest {
     }
 
     @Test
+    void sqliteShouldSyncTypeLengthAndDefaultCombinations() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            // SQLite 不支持 MODIFY，类型/长度不变时同步不应生成任何 DDL
+            DDLAutoExternalDatabaseIntegrationSupport.assertTypeLengthDefaultCombinationFlow(DbType.SQLITE, connection);
+        }
+    }
+
+    @Test
     void sqliteShouldCreateIntLongAutoAndManualIdTables() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             DDLAutoExternalDatabaseIntegrationSupport.assertIntLongAutoAndManualIdFlow(

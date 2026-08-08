@@ -206,6 +206,23 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
+    void oracleShouldSyncTypeLengthAndDefaultCombinations() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertTypeLengthDefaultCombinationFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "ALTER TABLE auto_type_length_default_user MODIFY (nickname DEFAULT 'new');",
+                    "ALTER TABLE auto_type_length_default_user MODIFY (amount DEFAULT 2.5);",
+                    "ALTER TABLE auto_type_length_default_user MODIFY (biz_date DEFAULT TRUNC(SYSDATE));",
+                    "ALTER TABLE auto_type_length_default_user MODIFY (sign_date DEFAULT TRUNC(SYSDATE));",
+                    "ALTER TABLE auto_type_length_default_user MODIFY (start_time DEFAULT CURRENT_TIMESTAMP);",
+                    "ALTER TABLE auto_type_length_default_user MODIFY (created_at DEFAULT CURRENT_TIMESTAMP);",
+                    "ALTER TABLE auto_type_length_default_user MODIFY (event_at DEFAULT CURRENT_TIMESTAMP);"
+            );
+        }
+    }
+
+    @Test
     void oracleShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(

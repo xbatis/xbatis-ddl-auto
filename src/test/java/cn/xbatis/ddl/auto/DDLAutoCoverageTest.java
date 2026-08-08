@@ -18,7 +18,10 @@ import java.sql.*;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -598,6 +601,120 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void createSqlShouldCombineTypeLengthAndDefaultByDbType() {
+        DefaultDDLBuilder builder = new DefaultDDLBuilder();
+        Map<DbType, String[]> expectedFragments = new LinkedHashMap<>();
+        expectedFragments.put(DbType.H2, new String[]{
+                "id BIGINT NOT NULL PRIMARY KEY",
+                "nickname VARCHAR(32) DEFAULT 'guest'",
+                "large_text VARCHAR(5000)",
+                "amount DECIMAL(12,3) DEFAULT 1.5",
+                "enabled BOOLEAN DEFAULT TRUE",
+                "biz_date DATE DEFAULT CURRENT_DATE",
+                "sign_date DATE DEFAULT CURRENT_DATE",
+                "start_time TIME DEFAULT CURRENT_TIME",
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP",
+                "remark VARCHAR(255)"
+        });
+        expectedFragments.put(DbType.PGSQL, expectedFragments.get(DbType.H2));
+        expectedFragments.put(DbType.GAUSS, expectedFragments.get(DbType.H2));
+        expectedFragments.put(DbType.KING_BASE, expectedFragments.get(DbType.H2));
+        expectedFragments.put(DbType.HIGHGO, expectedFragments.get(DbType.H2));
+        expectedFragments.put(DbType.SQLITE, expectedFragments.get(DbType.H2));
+        expectedFragments.put(DbType.MYSQL, new String[]{
+                "id BIGINT NOT NULL PRIMARY KEY",
+                "nickname VARCHAR(32) DEFAULT 'guest'",
+                "large_text VARCHAR(5000)",
+                "amount DECIMAL(12,3) DEFAULT 1.5",
+                "enabled TINYINT(1) DEFAULT 1",
+                "biz_date DATE DEFAULT (CURRENT_DATE)",
+                "sign_date DATE DEFAULT (CURRENT_DATE)",
+                "start_time TIME DEFAULT (CURRENT_TIME)",
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "remark VARCHAR(255)"
+        });
+        expectedFragments.put(DbType.MARIA_DB, expectedFragments.get(DbType.MYSQL));
+        expectedFragments.put(DbType.OCEAN_BASE, expectedFragments.get(DbType.MYSQL));
+        expectedFragments.put(DbType.COBAR, expectedFragments.get(DbType.MYSQL));
+        expectedFragments.put(DbType.SQL_SERVER, new String[]{
+                "id BIGINT NOT NULL PRIMARY KEY",
+                "nickname NVARCHAR(32) DEFAULT 'guest'",
+                "large_text NVARCHAR(MAX)",
+                "amount DECIMAL(12,3) DEFAULT 1.5",
+                "enabled BIT DEFAULT 1",
+                "biz_date DATE DEFAULT (CAST(GETDATE() AS DATE))",
+                "sign_date DATE DEFAULT (CAST(GETDATE() AS DATE))",
+                "start_time TIME DEFAULT (CAST(GETDATE() AS TIME))",
+                "created_at DATETIME2 DEFAULT SYSDATETIME()",
+                "event_at DATETIMEOFFSET DEFAULT SYSDATETIMEOFFSET()",
+                "remark NVARCHAR(255)"
+        });
+        expectedFragments.put(DbType.ORACLE, new String[]{
+                "id NUMBER(19) NOT NULL PRIMARY KEY",
+                "nickname VARCHAR2(32) DEFAULT 'guest'",
+                "large_text CLOB",
+                "amount NUMBER(12,3) DEFAULT 1.5",
+                "enabled NUMBER(1) DEFAULT 1",
+                "biz_date DATE DEFAULT TRUNC(SYSDATE)",
+                "sign_date DATE DEFAULT TRUNC(SYSDATE)",
+                "start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP",
+                "remark VARCHAR2(255)"
+        });
+        expectedFragments.put(DbType.DM, new String[]{
+                "id BIGINT NOT NULL PRIMARY KEY",
+                "nickname VARCHAR2(32) DEFAULT 'guest'",
+                "large_text CLOB",
+                "amount NUMBER(12,3) DEFAULT 1.5",
+                "enabled NUMBER(1) DEFAULT 1",
+                "biz_date DATE DEFAULT TRUNC(SYSDATE)",
+                "sign_date DATE DEFAULT TRUNC(SYSDATE)",
+                "start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                "event_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP",
+                "remark VARCHAR2(255)"
+        });
+        expectedFragments.put(DbType.DB2, new String[]{
+                "id BIGINT NOT NULL PRIMARY KEY",
+                "nickname VARCHAR(32) DEFAULT 'guest'",
+                "large_text VARCHAR(5000)",
+                "amount DECIMAL(12,3) DEFAULT 1.5",
+                "enabled BOOLEAN DEFAULT TRUE",
+                "biz_date DATE DEFAULT CURRENT DATE",
+                "sign_date DATE DEFAULT CURRENT DATE",
+                "start_time TIME DEFAULT CURRENT TIME",
+                "created_at TIMESTAMP DEFAULT CURRENT TIMESTAMP",
+                "event_at TIMESTAMP DEFAULT CURRENT TIMESTAMP",
+                "remark VARCHAR(255)"
+        });
+        expectedFragments.put(DbType.CLICK_HOUSE, new String[]{
+                "id BIGINT NOT NULL PRIMARY KEY",
+                "nickname VARCHAR(32) DEFAULT 'guest'",
+                "large_text VARCHAR(5000)",
+                "amount DECIMAL(12,3) DEFAULT 1.5",
+                "enabled BOOLEAN DEFAULT TRUE",
+                "biz_date DATE DEFAULT today()",
+                "sign_date DATE DEFAULT today()",
+                "start_time TIME DEFAULT now()",
+                "created_at TIMESTAMP DEFAULT now()",
+                "event_at DateTime64(3, 'UTC') DEFAULT now()",
+                "remark VARCHAR(255)"
+        });
+
+        assertEquals(15, expectedFragments.size(), "Expect every concrete DbType to be covered");
+        for (Map.Entry<DbType, String[]> entry : expectedFragments.entrySet()) {
+            String sql = builder.buildCreateTableSql(entry.getKey(), TypeLengthDefaultMatrix.class);
+            for (String fragment : entry.getValue()) {
+                assertTrue(sql.contains(fragment),
+                        entry.getKey().getName() + " should contain [" + fragment + "], SQL: " + sql);
+            }
+        }
+    }
+
+    @Test
     void createIndexSqlShouldCoverNamedUniqueCompositeIndex() {
         ExposedSqlBuilder builder = new ExposedSqlBuilder();
         TableInfo tableInfo = Tables.get(FacadeUser.class);
@@ -958,9 +1075,40 @@ class DDLAutoCoverageTest {
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("('now'::text)::timestamp without time zone"));
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("('now'::text)::timestamp(6) with time zone"));
         assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("('now'::text)::timestamp(6) without time zone"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("'now'::timestamp"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("'now'::timestamp(6) without time zone"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("'now'::text::timestamp(6) without time zone"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("now()::timestamp(6) with time zone"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CAST('now' AS TIMESTAMP)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CAST('now' AS TIMESTAMP(6) WITHOUT TIME ZONE)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("CAST(now() AS TIMESTAMP WITH TIME ZONE)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("TEXT_TIMESTAMP('NOW'::TEXT)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("TEXT_TIMESTAMPTZ('NOW'::TEXT)"));
+        assertEquals("CURRENT_TIMESTAMP", creator.exposeNormalizeDefaultValue("TEXT_TIMESTAMP(NOW())"));
         assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("(CURRENT_DATE)"));
         assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("curdate()"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("CURRENT_DATE(0)"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("TEXT_DATE('NOW'::TEXT)"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("TEXT_DATE(NOW())"));
         assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("curtime()"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("CURRENT_TIME(6)"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("TEXT_TIME('NOW'::TEXT)"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("TEXT_TIME(NOW())"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("('now'::text)::date"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("'now'::date"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("('now')::date"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("'now'::text::date"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("now()::date"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("pg_systimestamp()::date"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("CAST('now' AS DATE)"));
+        assertEquals("CURRENT_DATE", creator.exposeNormalizeDefaultValue("CAST(now() AS DATE)"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("('now'::text)::time"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("'now'::time"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("'now'::text::time(6) without time zone"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("now()::time"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("('now'::text)::time(6) with time zone"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("('now'::text)::time(6) without time zone"));
+        assertEquals("CURRENT_TIME", creator.exposeNormalizeDefaultValue("CAST('now' AS TIME(6) WITHOUT TIME ZONE)"));
         assertEquals("TRUNC(SYSDATE)", creator.exposeNormalizeDefaultValue("TRUNC(SYSDATE)"));
         assertEquals("", creator.exposeNormalizeDefaultValue("NULL"));
         assertEquals("", creator.exposeNormalizeDefaultValue("'NULL'"));
@@ -990,6 +1138,15 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void syncModeShouldNotTreatPostgresqlTimestamptzAsTypeChange() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        List<String> sqlList = creator.exposeSyncModifyDefaultPostgresqlTimestamptzSqlList();
+        assertEquals(Collections.singletonList(
+                "ALTER TABLE auto_sync_modify_default_tz_user ALTER COLUMN event_at SET DEFAULT CURRENT_TIMESTAMP;"
+        ), sqlList);
+    }
+
+    @Test
     void syncModeShouldNotTreatPostgresqlTimestampPrecisionAsTypeChange() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
         List<String> sqlList = creator.exposeSyncModifyDefaultPostgresqlTimestampWithoutTimeZoneSqlList();
@@ -997,6 +1154,31 @@ class DDLAutoCoverageTest {
                 "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';",
                 "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN create_time SET DEFAULT CURRENT_TIMESTAMP;"
         ), sqlList);
+    }
+
+    @Test
+    void syncModeShouldRoundTripOpenGaussStoredDateAndTimeDefaults() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        List<String> sqlList = creator.exposeSyncIdempotentAfterGaussDefaultsSqlList();
+        assertTrue(sqlList.isEmpty(),
+                "openGauss 存储形态的 CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP 默认值不应再触发 DDL: " + sqlList);
+    }
+
+    @Test
+    void syncModeShouldRoundTripOpenGaussCastAndBareCastDefaultVariants() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        List<String> sqlList = creator.exposeSyncIdempotentAfterGaussDefaultsCastVariantsSqlList();
+        assertTrue(sqlList.isEmpty(),
+                "openGauss CAST/'now'::date 等变体默认值不应再触发 DDL: " + sqlList);
+    }
+
+    @Test
+    void syncDetectionShouldTreatCrossKindNowDefaultAsEquivalentOnDateOrTimeColumn() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        // date 列上，时间戳形态的当前时间默认值与 CURRENT_DATE 语义一致，不应触发 DDL
+        List<String> sqlList = creator.exposeSyncIdempotentAfterNowTimestampStoredAsDateDefaultsSqlList();
+        assertTrue(sqlList.isEmpty(),
+                "date 列上时间戳形态的当前时间默认值不应再触发 DDL: " + sqlList);
     }
 
     @Test
@@ -1011,6 +1193,10 @@ class DDLAutoCoverageTest {
                 creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP(6) WITH TIME ZONE"));
         assertEquals("TIMESTAMP WITH LOCAL TIME ZONE",
                 creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP(6) WITH LOCAL TIME ZONE"));
+        assertEquals("TIMESTAMP WITH TIME ZONE",
+                creator.exposeNormalizeColumnTypeSignature(DbType.KING_BASE, "TIMESTAMPTZ"));
+        assertEquals("TIMESTAMP WITH TIME ZONE",
+                creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "timestamptz"));
         assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "TIMESTAMP(6) WITHOUT TIME ZONE"));
         assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "timestamp(6) without time zone"));
         assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "TIMESTAMP WITHOUT TIME ZONE"));
@@ -1019,6 +1205,41 @@ class DDLAutoCoverageTest {
         assertEquals("VARCHAR2(64)", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "VARCHAR2(64)"));
         assertEquals("VARCHAR(64)", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "CHARACTER VARYING(64)"));
         assertEquals("BIGINT", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "INT8"));
+    }
+
+    @Test
+    void syncDetectionShouldRoundTripTypeLengthAndDefaultByDbType() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        for (DbType dbType : DbType.values()) {
+            if (dbType == DbType.UNKNOWN) {
+                continue;
+            }
+            List<String> sqlList = creator.exposeDerivedMetadataModifySqlList(dbType, TypeLengthDefaultMatrix.class,
+                    "type_length_default_matrix", true);
+            assertTrue(sqlList.isEmpty(),
+                    dbType.getName() + " round-trip of type/length/default should not generate DDL: " + sqlList);
+        }
+    }
+
+    @Test
+    void syncDetectionShouldOnlyModifyDefaultWhenTypeAndLengthMatchByDbType() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        for (DbType dbType : DbType.values()) {
+            if (dbType == DbType.UNKNOWN) {
+                continue;
+            }
+            List<String> sqlList = creator.exposeDerivedMetadataModifySqlList(dbType, TypeLengthDefaultMatrix.class,
+                    "type_length_default_matrix", false);
+            if (dbType == DbType.SQLITE || dbType == DbType.CLICK_HOUSE) {
+                assertTrue(sqlList.isEmpty(),
+                        dbType.getName() + " does not support MODIFY, should not generate DDL: " + sqlList);
+                continue;
+            }
+            assertEquals(1, sqlList.size(),
+                    dbType.getName() + " should only emit the default modify SQL: " + sqlList);
+            assertTrue(sqlList.get(0).contains("nickname"), dbType.getName() + " SQL: " + sqlList);
+            assertTrue(sqlList.get(0).contains("'guest'"), dbType.getName() + " SQL: " + sqlList);
+        }
     }
 
     @Test
@@ -1862,6 +2083,19 @@ class DDLAutoCoverageTest {
             return createModifyColumnSqlList(DbType.ORACLE, entityMetadata(DbType.ORACLE, tableInfo), "auto_sync_modify_default_tz_user", databaseMetadata);
         }
 
+        List<String> exposeSyncModifyDefaultPostgresqlTimestamptzSqlList() {
+            TableInfo tableInfo = Tables.get(SyncModifyDefaultTzUserV2.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "auto_sync_modify_default_tz_user");
+            databaseMetadata.addPrimaryKey("catalog", null, "auto_sync_modify_default_tz_user", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_tz_user", "id", Types.BIGINT, "BIGINT", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            // Kingbase/PostgreSQL JDBC 对 timestamptz 列返回 TIMESTAMPTZ，不应被判定为类型变更
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_tz_user", "event_at", Types.TIMESTAMP_WITH_TIMEZONE,
+                    "TIMESTAMPTZ", 35, 6, DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.PGSQL, entityMetadata(DbType.PGSQL, tableInfo), "auto_sync_modify_default_tz_user", databaseMetadata);
+        }
+
         List<String> exposeSyncModifyDefaultPostgresqlTimestampWithoutTimeZoneSqlList() {
             TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class);
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
@@ -1877,8 +2111,130 @@ class DDLAutoCoverageTest {
             return createModifyColumnSqlList(DbType.PGSQL, entityMetadata(DbType.PGSQL, tableInfo), "auto_sync_modify_default_user", databaseMetadata);
         }
 
+        List<String> exposeSyncIdempotentAfterGaussDefaultsSqlList() {
+            TableInfo tableInfo = Tables.get(TypeLengthDefaultMatrix.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "type_length_default_matrix");
+            databaseMetadata.addPrimaryKey("catalog", null, "type_length_default_matrix", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "id", Types.BIGINT, "BIGINT", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "nickname", Types.VARCHAR, "VARCHAR", 32, 0,
+                    DatabaseMetaData.columnNullable, "'guest'", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "large_text", Types.VARCHAR, "VARCHAR", 5000, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "amount", Types.NUMERIC, "NUMERIC", 12, 3,
+                    DatabaseMetaData.columnNullable, "1.5", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "enabled", Types.BOOLEAN, "BOOLEAN", 1, 0,
+                    DatabaseMetaData.columnNullable, "TRUE", null, null, null);
+            // openGauss 将 CURRENT_DATE/CURRENT_TIME/CURRENT_TIMESTAMP 默认值存储为
+            // TEXT_DATE/TEXT_TIME/TEXT_TIMESTAMP('now'::text) 函数形态（真实库确认）
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "biz_date", Types.DATE, "DATE", 10, 0,
+                    DatabaseMetaData.columnNullable, "TEXT_DATE('NOW'::TEXT)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "sign_date", Types.DATE, "DATE", 10, 0,
+                    DatabaseMetaData.columnNullable, "TEXT_DATE('NOW'::TEXT)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "start_time", Types.TIME, "TIME", 15, 6,
+                    DatabaseMetaData.columnNullable, "TEXT_TIME('NOW'::TEXT)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "created_at", Types.TIMESTAMP, "TIMESTAMP", 29, 6,
+                    DatabaseMetaData.columnNullable, "TEXT_TIMESTAMP('NOW'::TEXT)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "event_at", Types.TIMESTAMP_WITH_TIMEZONE, "TIMESTAMPTZ", 35, 6,
+                    DatabaseMetaData.columnNullable, "TEXT_TIMESTAMPTZ('NOW'::TEXT)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "remark", Types.VARCHAR, "VARCHAR", 255, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.GAUSS, entityMetadata(DbType.GAUSS, tableInfo), "type_length_default_matrix", databaseMetadata);
+        }
+
+        List<String> exposeSyncIdempotentAfterGaussDefaultsCastVariantsSqlList() {
+            TableInfo tableInfo = Tables.get(TypeLengthDefaultMatrix.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "type_length_default_matrix");
+            databaseMetadata.addPrimaryKey("catalog", null, "type_length_default_matrix", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "id", Types.BIGINT, "BIGINT", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "nickname", Types.VARCHAR, "VARCHAR", 32, 0,
+                    DatabaseMetaData.columnNullable, "'guest'", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "large_text", Types.VARCHAR, "VARCHAR", 5000, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "amount", Types.NUMERIC, "NUMERIC", 12, 3,
+                    DatabaseMetaData.columnNullable, "1.5", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "enabled", Types.BOOLEAN, "BOOLEAN", 1, 0,
+                    DatabaseMetaData.columnNullable, "TRUE", null, null, null);
+            // 模拟 openGauss 其他可能的存储形态：CAST 强转、无 ::text 的直接强转
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "biz_date", Types.DATE, "DATE", 10, 0,
+                    DatabaseMetaData.columnNullable, "'now'::date", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "sign_date", Types.DATE, "DATE", 10, 0,
+                    DatabaseMetaData.columnNullable, "CAST('now' AS DATE)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "start_time", Types.TIME, "TIME", 15, 6,
+                    DatabaseMetaData.columnNullable, "CAST('now' AS TIME(6) WITHOUT TIME ZONE)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "created_at", Types.TIMESTAMP, "TIMESTAMP", 29, 6,
+                    DatabaseMetaData.columnNullable, "CAST('now' AS TIMESTAMP(6) WITHOUT TIME ZONE)", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "event_at", Types.TIMESTAMP_WITH_TIMEZONE, "TIMESTAMPTZ", 35, 6,
+                    DatabaseMetaData.columnNullable, "pg_systimestamp()", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "remark", Types.VARCHAR, "VARCHAR", 255, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.GAUSS, entityMetadata(DbType.GAUSS, tableInfo), "type_length_default_matrix", databaseMetadata);
+        }
+
+        List<String> exposeSyncIdempotentAfterNowTimestampStoredAsDateDefaultsSqlList() {
+            TableInfo tableInfo = Tables.get(TypeLengthDefaultMatrix.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "type_length_default_matrix");
+            databaseMetadata.addPrimaryKey("catalog", null, "type_length_default_matrix", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "id", Types.BIGINT, "BIGINT", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "nickname", Types.VARCHAR, "VARCHAR", 32, 0,
+                    DatabaseMetaData.columnNullable, "'guest'", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "large_text", Types.VARCHAR, "VARCHAR", 5000, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "amount", Types.NUMERIC, "NUMERIC", 12, 3,
+                    DatabaseMetaData.columnNullable, "1.5", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "enabled", Types.BOOLEAN, "BOOLEAN", 1, 0,
+                    DatabaseMetaData.columnNullable, "TRUE", null, null, null);
+            // date 列上存储为时间戳形态的当前时间默认值，语义上与 CURRENT_DATE 一致
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "biz_date", Types.DATE, "DATE", 10, 0,
+                    DatabaseMetaData.columnNullable, "now()", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "sign_date", Types.DATE, "DATE", 10, 0,
+                    DatabaseMetaData.columnNullable, "CURRENT_TIMESTAMP", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "start_time", Types.TIME, "TIME", 15, 6,
+                    DatabaseMetaData.columnNullable, "now()", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "created_at", Types.TIMESTAMP, "TIMESTAMP", 29, 6,
+                    DatabaseMetaData.columnNullable, "('now'::text)::timestamp(6) without time zone", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "event_at", Types.TIMESTAMP_WITH_TIMEZONE, "TIMESTAMPTZ", 35, 6,
+                    DatabaseMetaData.columnNullable, "now()", null, null, null);
+            databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "remark", Types.VARCHAR, "VARCHAR", 255, 0,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.GAUSS, entityMetadata(DbType.GAUSS, tableInfo), "type_length_default_matrix", databaseMetadata);
+        }
+
         String exposeNormalizeColumnTypeSignature(IDbType dbType, String typeSignature) {
             return normalizeColumnTypeSignature(dbType, typeSignature);
+        }
+
+        List<String> exposeDerivedMetadataModifySqlList(IDbType dbType, Class<?> entityClass, String tableName, boolean defaultsMatch) {
+            TableInfo tableInfo = Tables.get(entityClass);
+            List<ColumnInfo> columns = new DefaultDDLBuilder().getColumns(dbType, tableInfo);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, tableName);
+            databaseMetadata.addPrimaryKey("catalog", null, tableName, "PRIMARY", "id");
+            for (ColumnInfo column : columns) {
+                String typeSignature = buildExpectedColumnTypeSignature(dbType, column);
+                String[] parsed = parseTypeSignature(typeSignature);
+                String columnDefault = column.getDefinition().defaultValue();
+                if (!defaultsMatch && "nickname".equals(column.getName())) {
+                    columnDefault = "'old'";
+                }
+                databaseMetadata.addColumn("catalog", null, tableName, column.getName(), Types.OTHER, parsed[0],
+                        Integer.parseInt(parsed[1]), Integer.parseInt(parsed[2]), DatabaseMetaData.columnNullable,
+                        columnDefault, null, null, null);
+            }
+            return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
+        private static String[] parseTypeSignature(String typeSignature) {
+            Matcher matcher = Pattern.compile("^([A-Z0-9_ ]+)\\((\\d+)(?:,(\\d+))?\\)$").matcher(typeSignature);
+            if (matcher.matches()) {
+                return new String[]{matcher.group(1), matcher.group(2), matcher.group(3) == null ? "0" : matcher.group(3)};
+            }
+            return new String[]{typeSignature, "0", "0"};
         }
 
         boolean exposeDatabaseMetadataSchemaCatalogFallback(TableInfo tableInfo) {
@@ -2546,6 +2902,46 @@ class DDLAutoCoverageTest {
 
         @TableField(defaultValue = "{NOW}")
         private Instant eventAt;
+    }
+
+    @Table("type_length_default_matrix")
+    static class TypeLengthDefaultMatrix {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        // 静态默认值走 @ColumnDefinition 原样透传
+        @ColumnDefinition(length = 32, defaultValue = "'guest'")
+        private String nickname;
+
+        @ColumnDefinition(length = 5000)
+        private String largeText;
+
+        @ColumnDefinition(precision = 12, scale = 3)
+        @TableField(defaultValue = "1.5")
+        private BigDecimal amount;
+
+        // 动态/布尔默认值走 @TableField，由方言解析为 TRUE/1 等
+        @TableField(defaultValue = "1")
+        private Boolean enabled;
+
+        @TableField(defaultValue = "{TODAY}")
+        private LocalDate bizDate;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDate signDate;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalTime startTime;
+
+        @TableField(defaultValue = "{NOW}")
+        private LocalDateTime createdAt;
+
+        @TableField(defaultValue = "{NOW}")
+        private Instant eventAt;
+
+        @TableField
+        private String remark;
     }
 
     @Table("composite_primary_key_user")

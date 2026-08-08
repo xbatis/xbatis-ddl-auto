@@ -225,6 +225,23 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
+    void mysqlShouldSyncTypeLengthAndDefaultCombinations() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertTypeLengthDefaultCombinationFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN nickname VARCHAR(32) DEFAULT 'new';",
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN amount DECIMAL(12,3) DEFAULT 2.5;",
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN biz_date DATE DEFAULT (CURRENT_DATE);",
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN sign_date DATE DEFAULT (CURRENT_DATE);",
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN start_time TIME DEFAULT (CURRENT_TIME);",
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP;",
+                    "ALTER TABLE auto_type_length_default_user MODIFY COLUMN event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;"
+            );
+        }
+    }
+
+    @Test
     void mysqlShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(
