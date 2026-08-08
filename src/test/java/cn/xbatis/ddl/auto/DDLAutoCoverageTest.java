@@ -981,6 +981,47 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void syncModeShouldNotTreatOracleTimestampWithTimeZonePrecisionAsTypeChange() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        List<String> sqlList = creator.exposeSyncModifyDefaultOracleTimestampWithTimeZoneSqlList();
+        assertEquals(Collections.singletonList(
+                "ALTER TABLE auto_sync_modify_default_tz_user MODIFY (event_at DEFAULT CURRENT_TIMESTAMP);"
+        ), sqlList);
+    }
+
+    @Test
+    void syncModeShouldNotTreatPostgresqlTimestampPrecisionAsTypeChange() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        List<String> sqlList = creator.exposeSyncModifyDefaultPostgresqlTimestampWithoutTimeZoneSqlList();
+        assertEquals(Arrays.asList(
+                "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN username SET DEFAULT 'new';",
+                "ALTER TABLE auto_sync_modify_default_user ALTER COLUMN create_time SET DEFAULT CURRENT_TIMESTAMP;"
+        ), sqlList);
+    }
+
+    @Test
+    void columnTypeSignatureShouldNormalizeTimestampPrecisionVariants() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP"));
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP(6)"));
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP(3)"));
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "timestamp(6)"));
+        assertEquals("TIMESTAMP WITH TIME ZONE",
+                creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP(6) WITH TIME ZONE"));
+        assertEquals("TIMESTAMP WITH LOCAL TIME ZONE",
+                creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "TIMESTAMP(6) WITH LOCAL TIME ZONE"));
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "TIMESTAMP(6) WITHOUT TIME ZONE"));
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "timestamp(6) without time zone"));
+        assertEquals("TIMESTAMP", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "TIMESTAMP WITHOUT TIME ZONE"));
+
+        assertEquals("NUMBER(19)", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "NUMBER(19)"));
+        assertEquals("VARCHAR2(64)", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "VARCHAR2(64)"));
+        assertEquals("VARCHAR(64)", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "CHARACTER VARYING(64)"));
+        assertEquals("BIGINT", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "INT8"));
+    }
+
+    @Test
     void commentModifySqlShouldCoverInlineAndSeparatedVariants() {
         CommentModifyExecutor creator = new CommentModifyExecutor();
 
@@ -1808,6 +1849,38 @@ class DDLAutoCoverageTest {
             return createModifyColumnSqlList(DbType.ORACLE, entityMetadata(DbType.ORACLE, tableInfo), "auto_sync_modify_default_user", databaseMetadata);
         }
 
+        List<String> exposeSyncModifyDefaultOracleTimestampWithTimeZoneSqlList() {
+            TableInfo tableInfo = Tables.get(SyncModifyDefaultTzUserV2.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "auto_sync_modify_default_tz_user");
+            databaseMetadata.addPrimaryKey("catalog", null, "auto_sync_modify_default_tz_user", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_tz_user", "id", Types.BIGINT, "NUMBER", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            // Oracle JDBC 对 TIMESTAMP WITH TIME ZONE 列返回 TIMESTAMP(6) WITH TIME ZONE，不应被判定为类型变更
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_tz_user", "event_at", Types.TIMESTAMP_WITH_TIMEZONE,
+                    "TIMESTAMP(6) WITH TIME ZONE", 6, 0, DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.ORACLE, entityMetadata(DbType.ORACLE, tableInfo), "auto_sync_modify_default_tz_user", databaseMetadata);
+        }
+
+        List<String> exposeSyncModifyDefaultPostgresqlTimestampWithoutTimeZoneSqlList() {
+            TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyDefaultUserV2.class);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, "auto_sync_modify_default_user");
+            databaseMetadata.addPrimaryKey("catalog", null, "auto_sync_modify_default_user", "PRIMARY", "id");
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "id", Types.BIGINT, "BIGINT", 19, 0,
+                    DatabaseMetaData.columnNoNulls, null, null, null, null);
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "username", Types.VARCHAR, "VARCHAR", 64, 0,
+                    DatabaseMetaData.columnNullable, "'old'", null, null, null);
+            // 部分驱动对 TIMESTAMP 列返回 timestamp(6) without time zone，不应被判定为类型变更
+            databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "create_time", Types.TIMESTAMP,
+                    "TIMESTAMP(6) WITHOUT TIME ZONE", 6, 0, DatabaseMetaData.columnNullable, null, null, null, null);
+            return createModifyColumnSqlList(DbType.PGSQL, entityMetadata(DbType.PGSQL, tableInfo), "auto_sync_modify_default_user", databaseMetadata);
+        }
+
+        String exposeNormalizeColumnTypeSignature(IDbType dbType, String typeSignature) {
+            return normalizeColumnTypeSignature(dbType, typeSignature);
+        }
+
         boolean exposeDatabaseMetadataSchemaCatalogFallback(TableInfo tableInfo) {
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
             databaseMetadata.addTable(tableInfo.getSchema(), null, tableInfo.getTableName());
@@ -2453,6 +2526,26 @@ class DDLAutoCoverageTest {
 
         @TableField(defaultValue = "{TODAY}")
         private LocalDate todayDate;
+    }
+
+    @Table("auto_sync_modify_default_tz_user")
+    static class SyncModifyDefaultTzUserV1 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @TableField
+        private Instant eventAt;
+    }
+
+    @Table("auto_sync_modify_default_tz_user")
+    static class SyncModifyDefaultTzUserV2 {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @TableField(defaultValue = "{NOW}")
+        private Instant eventAt;
     }
 
     @Table("composite_primary_key_user")

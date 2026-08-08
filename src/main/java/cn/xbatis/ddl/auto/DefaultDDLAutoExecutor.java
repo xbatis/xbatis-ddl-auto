@@ -2027,6 +2027,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         String normalized = typeSignature.trim().toUpperCase(Locale.ROOT)
                 .replaceAll("\\s+", " ")
+                // Oracle JDBC 会把 TIMESTAMP 的秒精度写进类型名（如 TIMESTAMP(6)），与实体侧 TIMESTAMP 语义等价，
+                // 统一后比较，避免误判类型变更；同时覆盖 TIMESTAMP(6) WITH/LOCAL/WITHOUT TIME ZONE。
+                // 需在括号折叠前处理，避免 ) 后的空格被折叠导致 WITH/WITHOUT 分支失配。
+                .replaceAll("^TIMESTAMP\\s*\\(\\s*\\d+\\s*\\)", "TIMESTAMP")
                 .replaceAll("\\s*\\(\\s*", "(")
                 .replaceAll("\\s*,\\s*", ",")
                 .replaceAll("\\s*\\)\\s*", ")");
@@ -2061,9 +2065,6 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         } else if (normalized.startsWith("TIMESTAMP WITH TIME ZONE")) {
             normalized = "TIMESTAMP WITH TIME ZONE" + normalized.substring("TIMESTAMP WITH TIME ZONE".length());
         }
-        // Oracle JDBC 会把 TIMESTAMP 的秒精度写进类型名（如 TIMESTAMP(6)），与实体侧 TIMESTAMP 语义等价，
-        // 统一后比较，避免误判类型变更；同样覆盖 TIMESTAMP(6) WITH TIME ZONE / WITH LOCAL TIME ZONE。
-        normalized = normalized.replaceAll("^TIMESTAMP\\(\\d+\\)", "TIMESTAMP");
         return normalized;
     }
 
