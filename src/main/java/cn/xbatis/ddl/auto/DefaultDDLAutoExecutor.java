@@ -1,8 +1,8 @@
 package cn.xbatis.ddl.auto;
 
-import cn.xbatis.core.mybatis.typeHandler.EnumSupport;
 import cn.xbatis.core.db.reflect.TableInfo;
 import cn.xbatis.core.db.reflect.Tables;
+import cn.xbatis.core.mybatis.typeHandler.EnumSupport;
 import cn.xbatis.db.IdAutoType;
 import cn.xbatis.db.annotations.ColumnDefinition;
 import db.sql.api.DbType;
@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import javax.sql.DataSource;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -1668,6 +1669,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             boolean defaultChanged = columnDefaultChanged(column, columnMetadata);
             boolean commentChanged = columnCommentChanged(column, columnMetadata);
             boolean autoIncrementChanged = columnAutoIncrementChanged(column, columnMetadata, idColumnCount);
+            System.out.println(column.getName() + "===> typeChanged:" + typeChanged + "===> defaultChanged:" + defaultChanged + "===> commentChanged:" + commentChanged + "===> autoIncrementChanged:" + autoIncrementChanged);
             if (autoIncrementChanged && !dialect.supportsModifyAutoIncrement(dbType)) {
                 throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
             }
@@ -1773,7 +1775,23 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     protected boolean columnTypeChanged(IDbType dbType, ColumnInfo column, ColumnMetadata columnMetadata) {
         String expectedType = normalizeColumnTypeSignature(dbType, buildExpectedColumnTypeSignature(dbType, column));
         String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
-        return !expectedType.equals(actualType);
+        boolean changed = !expectedType.equals(actualType);
+        if (!changed) {
+            return false;
+        }
+        if (expectedType.equals("TINYINT(1)")) {
+            changed = !actualType.equals("BIT") && !actualType.equals("BOOLEAN") && !actualType.equals("BOOL") && !actualType.equals("BOOLEANEAN");
+        } else if (expectedType.equals("TIMESTAMP WITH TIME ZONE") && actualType.equals("DATETIME WITH TIME ZONE")) {
+            changed = false;
+        } else if ((expectedType.contains("TIMESTAMP") || expectedType.contains("DATETIME")) && (actualType.contains("TIMESTAMP") || actualType.contains("DATETIME"))) {
+            changed = false;
+        } else if ((expectedType.contains("DATE")) && (actualType.contains("DATE"))) {
+            changed = false;
+        } else if ((expectedType.contains("NVARCHAR(MAX)")) && (actualType.startsWith("NVARCHAR"))) {
+            changed = false;
+        }
+
+        return changed;
     }
 
     /**
@@ -1845,8 +1863,22 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         String expectedDefault = normalizeDefaultValue(column.getDefinition().defaultValue());
         String actualDefault = normalizeDefaultValue(columnMetadata.getColumnDefault());
+        System.out.println(column.getName() + " ==> " + expectedDefault + ":" + actualDefault);
         if (expectedDefault.equals(actualDefault)) {
             return false;
+        }
+        if (expectedDefault.equals(actualDefault.replaceAll("[\\(|\\)]", ""))) {
+            return false;
+        }
+        //兼容浮点默认值
+        if (Number.class.isAssignableFrom(column.getJavaType())) {
+            try {
+                if (new BigDecimal(expectedDefault).compareTo(new BigDecimal(actualDefault.replaceAll("[\\(|\\)]", ""))) == 0) {
+                    return false;
+                }
+            } catch (Exception e) {
+
+            }
         }
         return !isEquivalentDynamicDefault(column, column.getDefinition().defaultValue(), columnMetadata.getColumnDefault());
     }
@@ -1876,8 +1908,17 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (expectedKind.equals(actualKind)) {
             return true;
         }
-        // 时间戳表达式在 date/time 类型列上会被隐式转换为当前日期/时间，与 CURRENT_DATE/CURRENT_TIME 语义一致
         Class<?> javaType = column.getJavaType();
+        if (javaType == Boolean.class || javaType == boolean.class) {
+            if (expectedRaw.equals("1") && actualRaw.equalsIgnoreCase("TRUE")) {
+                return false;
+            } else if (expectedRaw.equals("0") && actualRaw.equalsIgnoreCase("FALSE")) {
+                return false;
+            }
+        }
+
+        // 时间戳表达式在 date/time 类型列上会被隐式转换为当前日期/时间，与 CURRENT_DATE/CURRENT_TIME 语义一致
+
         boolean dateOnlyColumn = javaType == LocalDate.class || javaType == java.sql.Date.class;
         boolean timeOnlyColumn = javaType == LocalTime.class || javaType == Time.class;
         if (dateOnlyColumn || timeOnlyColumn){
