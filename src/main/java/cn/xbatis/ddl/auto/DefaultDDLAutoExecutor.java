@@ -4,6 +4,7 @@ import cn.xbatis.core.db.reflect.TableInfo;
 import cn.xbatis.core.db.reflect.Tables;
 import cn.xbatis.core.mybatis.typeHandler.EnumSupport;
 import cn.xbatis.db.IdAutoType;
+import cn.xbatis.db.IndexDirection;
 import cn.xbatis.db.annotations.ColumnDefinition;
 import db.sql.api.DbType;
 import db.sql.api.IDbType;
@@ -433,13 +434,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                         // 因此 DB2 需要先建索引，最后再删列
                         sqlList.addAll(createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                         sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
-                        sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createAddChangedIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                         sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                     } else {
                         sqlList.addAll(createDropColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                         sqlList.addAll(createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                         sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
-                        sqlList.addAll(createAddIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+                        sqlList.addAll(createAddChangedIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
                     }
                 } else {
                     sqlList.addAll(createAddColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata));
@@ -605,7 +606,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (mode != Mode.SYNC || !shouldProbeColumnTypes(dbType, entityMetadataList)) {
             return;
         }
-        databaseMetadata.setColumnTypeProbeResult(probeColumnTypes(dbType, connection, entityMetadataList));
+        Map<String, ColumnTypeProbeSpec> probeSpecs = columnTypeProbeSpecs(dbType, entityMetadataList, databaseMetadata);
+        databaseMetadata.setColumnTypeProbeResult(probeColumnTypes(dbType, connection, probeSpecs));
     }
 
     /**
@@ -629,7 +631,12 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     protected ColumnTypeProbeResult probeColumnTypes(IDbType dbType,
                                                      Connection connection,
                                                      Collection<EntityDDLMetadata> entityMetadataList) throws SQLException {
-        Map<String, ColumnTypeProbeSpec> probeSpecs = columnTypeProbeSpecs(dbType, entityMetadataList);
+        return probeColumnTypes(dbType, connection, columnTypeProbeSpecs(dbType, entityMetadataList));
+    }
+
+    protected ColumnTypeProbeResult probeColumnTypes(IDbType dbType,
+                                                     Connection connection,
+                                                     Map<String, ColumnTypeProbeSpec> probeSpecs) throws SQLException {
         if (probeSpecs.isEmpty()) {
             return new ColumnTypeProbeResult(Collections.<String, ColumnMetadata>emptyMap());
         }
@@ -671,6 +678,47 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             }
         }
         return probeSpecs;
+    }
+
+    /**
+     * 基于当前数据库元数据收集真正需要类型族探测的列：
+     * 表/列不存在时无需探测；长度或精度已经能判定变化时也无需探测。
+     */
+    protected Map<String, ColumnTypeProbeSpec> columnTypeProbeSpecs(IDbType dbType,
+                                                                    Collection<EntityDDLMetadata> entityMetadataList,
+                                                                    DatabaseMetadata databaseMetadata) {
+        if (databaseMetadata == null) {
+            return columnTypeProbeSpecs(dbType, entityMetadataList);
+        }
+        Map<String, ColumnTypeProbeSpec> probeSpecs = new LinkedHashMap<>();
+        for (EntityDDLMetadata entityMetadata : entityMetadataList) {
+            TableInfo tableInfo = entityMetadata.getTableInfo();
+            for (String tableName : resolveTableNames(tableInfo)) {
+                if (databaseMetadata.objectType(tableInfo, tableName) != OBJECT_TABLE) {
+                    continue;
+                }
+                for (ColumnInfo column : entityMetadata.getColumns()) {
+                    ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, column.getName());
+                    if (columnMetadata == null || !needsColumnTypeFamilyProbe(dbType, column, columnMetadata)) {
+                        continue;
+                    }
+                    ColumnTypeProbeSpec probeSpec = columnTypeProbeSpec(dbType, column);
+                    if (!probeSpecs.containsKey(probeSpec.typeFamilyKey)) {
+                        probeSpecs.put(probeSpec.typeFamilyKey, probeSpec);
+                    }
+                }
+            }
+        }
+        return probeSpecs;
+    }
+
+    protected boolean needsColumnTypeFamilyProbe(IDbType dbType, ColumnInfo column, ColumnMetadata columnMetadata) {
+        String expectedTypeSignature = buildExpectedColumnTypeSignature(dbType, column);
+        String expectedType = normalizeColumnTypeSignature(dbType, expectedTypeSignature);
+        String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
+        String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, expectedType);
+        return !columnLengthChanged(expectedTypeFamilyKey, expectedType, actualType)
+                && !columnPrecisionChanged(expectedTypeFamilyKey, expectedType, actualType);
     }
 
     /**
@@ -1308,24 +1356,36 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             }
         }
         Map<String, Map<String, String>> sqlServerColumnRemarksByTable = supportsSqlServerColumnRemarks(metaData)
-                ? new LinkedHashMap<>()
+                ? readSqlServerColumnRemarksByMetadataScope(metaData, catalog, schema, tableName)
                 : null;
         Map<String, Map<String, String>> oracleIdentityColumnsByTable = supportsOracleIdentityColumns(metaData)
-                ? new LinkedHashMap<>()
+                ? readOracleIdentityColumnsByMetadataScope(metaData, catalog, schema, tableName)
                 : null;
+        boolean schemaMetadataScope = isBlank(tableName) && !isBlank(schema);
         for (ColumnMetadata column : columns) {
             String remarks = column.remarks;
             if (sqlServerColumnRemarksByTable != null) {
                 String remarksCatalog = isBlank(column.catalog) ? catalog : column.catalog;
                 String remarksSchema = isBlank(column.schema) ? schema : column.schema;
                 String remarksTableName = isBlank(column.tableName) ? tableName : column.tableName;
+                if (schemaMetadataScope) {
+                    ensureColumnMetadataTable(sqlServerColumnRemarksByTable,
+                            metadataReadKey(remarksCatalog, remarksSchema, remarksTableName));
+                }
                 remarks = resolveSqlServerColumnRemarks(metaData, sqlServerColumnRemarksByTable,
                         remarksCatalog, remarksSchema, remarksTableName, column.columnName, remarks);
             }
             String isAutoIncrement = column.isAutoIncrement;
             if (oracleIdentityColumnsByTable != null) {
+                String identityCatalog = isBlank(column.catalog) ? catalog : column.catalog;
+                String identitySchema = isBlank(column.schema) ? schema : column.schema;
+                String identityTableName = isBlank(column.tableName) ? tableName : column.tableName;
+                if (schemaMetadataScope) {
+                    ensureColumnMetadataTable(oracleIdentityColumnsByTable,
+                            metadataReadKey(identityCatalog, identitySchema, identityTableName));
+                }
                 isAutoIncrement = resolveOracleIdentityColumn(metaData, oracleIdentityColumnsByTable,
-                        catalog, schema, tableName, column.columnName, isAutoIncrement);
+                        identityCatalog, identitySchema, identityTableName, column.columnName, isAutoIncrement);
             }
             databaseMetadata.addColumn(
                     column.catalog,
@@ -1361,6 +1421,50 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         } catch (SQLException ignored) {
             return false;
         }
+    }
+
+    protected Map<String, Map<String, String>> readOracleIdentityColumnsByMetadataScope(DatabaseMetaData metaData,
+                                                                                       String catalog,
+                                                                                       String schema,
+                                                                                       String tableName) throws SQLException {
+        if (isBlank(tableName) && !isBlank(schema)) {
+            return readOracleIdentityColumnsBySchema(metaData, catalog, schema);
+        }
+        return new LinkedHashMap<>();
+    }
+
+    /**
+     * 按 schema 批量读取 Oracle identity 列，避免多表 SYNC 时逐表查 ALL_TAB_COLUMNS。
+     */
+    protected Map<String, Map<String, String>> readOracleIdentityColumnsBySchema(DatabaseMetaData metaData,
+                                                                                String catalog,
+                                                                                String schema) throws SQLException {
+        String schemaName = unquoteIdentifier(schema);
+        if (metaData == null || isBlank(schemaName)) {
+            return Collections.emptyMap();
+        }
+        Map<String, Map<String, String>> identityColumnsByTable = new LinkedHashMap<>();
+        String sql = "SELECT owner, table_name, column_name, identity_column "
+                + "FROM all_tab_columns WHERE owner = ? AND identity_column = 'YES'";
+        try (PreparedStatement statement = metaData.getConnection().prepareStatement(sql)) {
+            statement.setString(1, schemaName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    String tableName = getString(resultSet, "table_name");
+                    String columnName = getString(resultSet, "column_name");
+                    if (!"YES".equalsIgnoreCase(getString(resultSet, "identity_column"))
+                            || isBlank(tableName) || isBlank(columnName)) {
+                        continue;
+                    }
+                    String owner = getString(resultSet, "owner");
+                    putColumnMetadataValue(identityColumnsByTable,
+                            metadataReadKey(catalog, owner, tableName), columnName, "YES");
+                    putColumnMetadataValue(identityColumnsByTable,
+                            metadataReadKey(null, owner, tableName), columnName, "YES");
+                }
+            }
+        }
+        return identityColumnsByTable;
     }
 
     /**
@@ -1433,6 +1537,66 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
     }
 
+    protected Map<String, Map<String, String>> readSqlServerColumnRemarksByMetadataScope(DatabaseMetaData metaData,
+                                                                                        String catalog,
+                                                                                        String schema,
+                                                                                        String tableName) throws SQLException {
+        if (isBlank(tableName) && !isBlank(schema)) {
+            return readSqlServerColumnRemarksBySchema(metaData, catalog, schema);
+        }
+        return new LinkedHashMap<>();
+    }
+
+    /**
+     * 按 schema 批量读取 SQL Server 列备注，避免多表 SYNC 时逐表查扩展属性。
+     */
+    protected Map<String, Map<String, String>> readSqlServerColumnRemarksBySchema(DatabaseMetaData metaData,
+                                                                                 String catalog,
+                                                                                 String schema) throws SQLException {
+        String schemaName = unquoteIdentifier(schema);
+        if (metaData == null || isBlank(schemaName)) {
+            return Collections.emptyMap();
+        }
+        String sql = "SELECT DB_NAME() AS table_catalog, s.name AS table_schema, t.name AS table_name, "
+                + "c.name AS column_name, CAST(ep.value AS NVARCHAR(4000)) AS remarks "
+                + "FROM sys.tables t "
+                + "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                + "JOIN sys.columns c ON c.object_id = t.object_id "
+                + "LEFT JOIN sys.extended_properties ep ON ep.class = 1 "
+                + "AND ep.major_id = t.object_id "
+                + "AND ep.minor_id = c.column_id "
+                + "AND ep.name = N'MS_Description' "
+                + "WHERE s.name = ?";
+        Map<String, Map<String, String>> columnRemarksByTable = new LinkedHashMap<>();
+        try (PreparedStatement statement = metaData.getConnection().prepareStatement(sql)) {
+            statement.setString(1, schemaName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    String tableCatalog = getString(resultSet, "table_catalog");
+                    String tableSchema = getString(resultSet, "table_schema");
+                    String tableName = getString(resultSet, "table_name");
+                    String columnName = getString(resultSet, "column_name");
+                    if (isBlank(tableName) || isBlank(columnName)) {
+                        continue;
+                    }
+                    String remarks = getString(resultSet, "remarks");
+                    String tableCatalogKey = metadataReadKey(tableCatalog, tableSchema, tableName);
+                    String queryCatalogKey = metadataReadKey(catalog, tableSchema, tableName);
+                    String noCatalogKey = metadataReadKey(null, tableSchema, tableName);
+                    ensureColumnMetadataTable(columnRemarksByTable, tableCatalogKey);
+                    ensureColumnMetadataTable(columnRemarksByTable, queryCatalogKey);
+                    ensureColumnMetadataTable(columnRemarksByTable, noCatalogKey);
+                    if (remarks != null) {
+                        putColumnMetadataValue(columnRemarksByTable, tableCatalogKey, columnName, remarks);
+                        putColumnMetadataValue(columnRemarksByTable, queryCatalogKey, columnName, remarks);
+                        putColumnMetadataValue(columnRemarksByTable, noCatalogKey, columnName, remarks);
+                    }
+                }
+            }
+        }
+        return columnRemarksByTable;
+    }
+
     /**
      * 读取 SQL Server 列备注，扩展属性未命中时保留 JDBC REMARKS 原值。
      */
@@ -1480,12 +1644,29 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             statement.setString(2, actualTableName);
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
-                    columnRemarks.put(normalize(getString(resultSet, "column_name")),
-                            getString(resultSet, "remarks"));
+                    String remarks = getString(resultSet, "remarks");
+                    if (remarks != null) {
+                        columnRemarks.put(normalize(getString(resultSet, "column_name")), remarks);
+                    }
                 }
             }
         }
         return columnRemarks;
+    }
+
+    protected void ensureColumnMetadataTable(Map<String, Map<String, String>> valuesByTable, String tableKey) {
+        if (!valuesByTable.containsKey(tableKey)) {
+            valuesByTable.put(tableKey, new LinkedHashMap<>());
+        }
+    }
+
+    protected void putColumnMetadataValue(Map<String, Map<String, String>> valuesByTable,
+                                          String tableKey,
+                                          String columnName,
+                                          String value) {
+        ensureColumnMetadataTable(valuesByTable, tableKey);
+        Map<String, String> values = valuesByTable.get(tableKey);
+        values.put(normalize(columnName), value);
     }
 
     /**
@@ -1613,11 +1794,23 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                             getString(resultSet, "TABLE_NAME"),
                             indexName,
                             resultSet.getBoolean("NON_UNIQUE"),
-                            getString(resultSet, "COLUMN_NAME")
+                            getString(resultSet, "COLUMN_NAME"),
+                            getInt(resultSet, "ORDINAL_POSITION"),
+                            indexDirection(getString(resultSet, "ASC_OR_DESC"))
                     );
                 }
             }
         }
+    }
+
+    protected IndexDirection indexDirection(String ascOrDesc) {
+        if ("A".equalsIgnoreCase(ascOrDesc)) {
+            return IndexDirection.ASC;
+        }
+        if ("D".equalsIgnoreCase(ascOrDesc)) {
+            return IndexDirection.DESC;
+        }
+        return IndexDirection.DEFAULT;
     }
 
     /**
@@ -2119,10 +2312,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (probeColumnMetadata == null) {
             throw new IllegalStateException("Missing SYNC column type probe metadata for type family: " + expectedTypeFamilyKey);
         }
-        if (probeColumnMetadata.getTypeName().equals(columnMetadata.getTypeName())) {
-            return false;
-        }
-        return false;
+        String probeTypeFamilyKey = columnTypeFamilyKey(dbType, probeColumnMetadata);
+        String actualTypeFamilyKey = columnTypeFamilyKey(dbType, columnMetadata);
+        return !Objects.equals(probeTypeFamilyKey, actualTypeFamilyKey);
     }
 
     /**
@@ -2760,7 +2952,33 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      */
     protected List<String> createAddIndexSqlList(IDbType dbType, EntityDDLMetadata entityMetadata, String tableName, DatabaseMetadata databaseMetadata) {
         return createAddIndexSqlList(dbType, entityMetadata, tableName,
-                databaseMetadata.getIndexNames(entityMetadata.getTableInfo(), tableName), databaseMetadata);
+                databaseMetadata == null ? Collections.<String>emptySet()
+                        : databaseMetadata.getIndexNames(entityMetadata.getTableInfo(), tableName), databaseMetadata);
+    }
+
+    /**
+     * 为指定物理表中不存在或定义不一致的实体索引生成 CREATE INDEX SQL，供 SYNC 重建索引使用。
+     */
+    protected List<String> createAddChangedIndexSqlList(IDbType dbType, EntityDDLMetadata entityMetadata, String tableName, DatabaseMetadata databaseMetadata) {
+        TableInfo tableInfo = entityMetadata.getTableInfo();
+        List<IndexInfo> indexes = ddlBuilder.resolveIndexes(dbType, tableInfo, entityMetadata.getIndexes(), tableName);
+        if (indexes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<IndexInfo> missingIndexes = new ArrayList<>();
+        for (IndexInfo index : indexes) {
+            if (databaseMetadata == null || !databaseMetadata.indexDefinitionMatches(tableInfo, tableName, index)) {
+                missingIndexes.add(index);
+            }
+        }
+        if (missingIndexes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> sqlList = ddlBuilder.createIndexSqlList(dbType, tableInfo, missingIndexes, tableName);
+        if (databaseMetadata != null) {
+            databaseMetadata.addIndexes(tableInfo, tableName, missingIndexes);
+        }
+        return sqlList;
     }
 
     /**
@@ -2826,10 +3044,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         List<String> existingIndexNames = new ArrayList<>(databaseMetadata.getIndexNames(tableInfo, tableName));
         List<String> missingIndexNames = new ArrayList<>();
         for (String indexName : existingIndexNames) {
-            if (constraintIndexNameIndex.contains(indexName)) {
+            IndexInfo entityIndex = findIndexInfo(indexes, indexName);
+            if (entityIndex == null && constraintIndexNameIndex.contains(indexName)) {
                 continue;
             }
-            if (!entityIndexNameIndex.contains(indexName)) {
+            if (!entityIndexNameIndex.contains(indexName)
+                    || entityIndex == null
+                    || !databaseMetadata.indexDefinitionMatches(tableInfo, tableName, entityIndex)) {
                 missingIndexNames.add(indexName);
             }
         }
@@ -2840,6 +3061,15 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             missingIndexNames.set(i, normalize(missingIndexNames.get(i)));
         }
         return ddlBuilder.dropIndexSqlList(dbType, tableInfo, missingIndexNames, tableName);
+    }
+
+    protected IndexInfo findIndexInfo(Collection<IndexInfo> indexes, String indexName) {
+        for (IndexInfo index : indexes) {
+            if (metadataNameMatcher.matchesMetadataName(index.getName(), indexName)) {
+                return index;
+            }
+        }
+        return null;
     }
 
     /**
@@ -3127,6 +3357,24 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
+     * 索引字段元数据行。
+     */
+    protected static class IndexFieldMetadata {
+
+        private final String columnName;
+
+        private final IndexDirection direction;
+
+        private final int ordinalPosition;
+
+        IndexFieldMetadata(String columnName, IndexDirection direction, int ordinalPosition) {
+            this.columnName = columnName;
+            this.direction = direction == null ? IndexDirection.DEFAULT : direction;
+            this.ordinalPosition = ordinalPosition;
+        }
+    }
+
+    /**
      * 索引元数据行。
      */
     protected static class IndexMetadata {
@@ -3141,36 +3389,53 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private boolean nonUnique;
 
-        private final List<String> columnNames = new ArrayList<>();
+        private final List<IndexFieldMetadata> fields = new ArrayList<>();
 
-        IndexMetadata(String catalog, String schema, String tableName, String indexName, boolean nonUnique, Collection<String> columnNames) {
+        IndexMetadata(String catalog, String schema, String tableName, String indexName, boolean nonUnique, Collection<IndexFieldMetadata> fields) {
             this.catalog = catalog;
             this.schema = schema;
             this.tableName = tableName;
             this.indexName = indexName;
             this.nonUnique = nonUnique;
-            addColumnNames(columnNames);
+            addFields(fields);
         }
 
-        void addColumnNames(Collection<String> columnNames) {
-            if (columnNames == null) {
+        void addFields(Collection<IndexFieldMetadata> fields) {
+            if (fields == null) {
                 return;
             }
-            for (String columnName : columnNames) {
-                if (columnName != null && !columnName.trim().isEmpty()) {
-                    this.columnNames.add(columnName);
-                }
+            for (IndexFieldMetadata field : fields) {
+                addField(field);
             }
         }
 
-        void addColumnName(String columnName) {
-            if (columnName != null && !columnName.trim().isEmpty()) {
-                this.columnNames.add(columnName);
+        void addField(IndexFieldMetadata field) {
+            if (field == null || field.columnName == null || field.columnName.trim().isEmpty()) {
+                return;
             }
+            if (field.ordinalPosition <= 0 || fields.isEmpty()) {
+                fields.add(field);
+                return;
+            }
+            int insertIndex = fields.size();
+            for (int i = 0; i < fields.size(); i++) {
+                int currentOrdinal = fields.get(i).ordinalPosition;
+                if (currentOrdinal <= 0 || currentOrdinal > field.ordinalPosition) {
+                    insertIndex = i;
+                    break;
+                }
+            }
+            fields.add(insertIndex, field);
         }
 
         void setNonUnique(boolean nonUnique) {
             this.nonUnique = this.nonUnique || nonUnique;
+        }
+
+        void replace(boolean nonUnique, Collection<IndexFieldMetadata> fields) {
+            this.nonUnique = nonUnique;
+            this.fields.clear();
+            addFields(fields);
         }
     }
 
@@ -3388,6 +3653,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final Map<String, List<ColumnMetadata>> columnsByTableName = new LinkedHashMap<>();
 
+        private final Map<String, Map<String, List<ColumnMetadata>>> columnsByTableAndColumnName = new LinkedHashMap<>();
+
         private final Map<String, List<IndexMetadata>> indexesByTableName = new LinkedHashMap<>();
 
         private final Map<String, List<PrimaryKeyMetadata>> primaryKeysByTableName = new LinkedHashMap<>();
@@ -3443,8 +3710,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         void addColumn(String catalog, String schema, String tableName, String columnName, int dataType, String typeName,
                        int columnSize, int decimalDigits, int nullable, String columnDefault, String isAutoIncrement, String isGeneratedColumn, String remarks) {
-            put(columnsByTableName, metadataLookupKey(tableName), new ColumnMetadata(catalog, schema, tableName, columnName,
-                    dataType, typeName, columnSize, decimalDigits, nullable, columnDefault, isAutoIncrement, isGeneratedColumn, remarks));
+            ColumnMetadata columnMetadata = new ColumnMetadata(catalog, schema, tableName, columnName,
+                    dataType, typeName, columnSize, decimalDigits, nullable, columnDefault, isAutoIncrement, isGeneratedColumn, remarks);
+            put(columnsByTableName, metadataLookupKey(tableName), columnMetadata);
+            putColumn(columnsByTableAndColumnName, metadataLookupKey(tableName), metadataLookupKey(columnName), columnMetadata);
         }
 
         void addIndexes(TableInfo tableInfo, Collection<IndexInfo> addIndexes) {
@@ -3453,25 +3722,43 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         void addIndexes(TableInfo tableInfo, String tableName, Collection<IndexInfo> addIndexes) {
             for (IndexInfo index : addIndexes) {
-                List<String> columnNames = new ArrayList<>(index.getFields().size());
+                List<IndexFieldMetadata> fields = new ArrayList<>(index.getFields().size());
+                int ordinalPosition = 1;
                 for (IndexInfo.Field field : index.getFields()) {
-                    columnNames.add(field.getColumnName());
+                    fields.add(new IndexFieldMetadata(field.getColumnName(), field.getDirection(), ordinalPosition++));
                 }
-                addIndex(catalog, resolveSchema(tableInfo.getSchema(), defaultSchema), tableName, index.getName(),
-                        !index.isUnique(), columnNames);
+                setIndex(catalog, resolveSchema(tableInfo.getSchema(), defaultSchema), tableName, index.getName(),
+                        !index.isUnique(), fields);
             }
         }
 
         void addIndex(String catalog, String schema, String tableName, String indexName) {
-            addIndex(catalog, schema, tableName, indexName, false, Collections.emptyList());
+            addIndex(catalog, schema, tableName, indexName, false, Collections.<String>emptyList());
         }
 
         void addIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique, String columnName) {
+            addIndex(catalog, schema, tableName, indexName, nonUnique, columnName, 0, IndexDirection.DEFAULT);
+        }
+
+        void addIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique,
+                      String columnName, int ordinalPosition, IndexDirection direction) {
             addIndex(catalog, schema, tableName, indexName, nonUnique,
-                    columnName == null ? Collections.emptyList() : Collections.singletonList(columnName));
+                    columnName == null ? Collections.<IndexFieldMetadata>emptyList()
+                            : Collections.singletonList(new IndexFieldMetadata(columnName, direction, ordinalPosition)));
         }
 
         void addIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique, Collection<String> columnNames) {
+            List<IndexFieldMetadata> fields = new ArrayList<>();
+            if (columnNames != null) {
+                int ordinalPosition = 1;
+                for (String columnName : columnNames) {
+                    fields.add(new IndexFieldMetadata(columnName, IndexDirection.DEFAULT, ordinalPosition++));
+                }
+            }
+            addIndex(catalog, schema, tableName, indexName, nonUnique, fields);
+        }
+
+        void addIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique, List<IndexFieldMetadata> fields) {
             String key = metadataLookupKey(tableName);
             List<IndexMetadata> indexes = indexesByTableName.get(key);
             if (indexes == null) {
@@ -3480,11 +3767,26 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             }
             IndexMetadata indexMetadata = findIndexMetadata(indexes, catalog, schema, tableName, indexName);
             if (indexMetadata == null) {
-                indexes.add(new IndexMetadata(catalog, schema, tableName, indexName, nonUnique, columnNames));
+                indexes.add(new IndexMetadata(catalog, schema, tableName, indexName, nonUnique, fields));
                 return;
             }
             indexMetadata.setNonUnique(nonUnique);
-            indexMetadata.addColumnNames(columnNames);
+            indexMetadata.addFields(fields);
+        }
+
+        void setIndex(String catalog, String schema, String tableName, String indexName, boolean nonUnique, List<IndexFieldMetadata> fields) {
+            String key = metadataLookupKey(tableName);
+            List<IndexMetadata> indexes = indexesByTableName.get(key);
+            if (indexes == null) {
+                indexes = new ArrayList<>();
+                indexesByTableName.put(key, indexes);
+            }
+            IndexMetadata indexMetadata = findIndexMetadata(indexes, catalog, schema, tableName, indexName);
+            if (indexMetadata == null) {
+                indexes.add(new IndexMetadata(catalog, schema, tableName, indexName, nonUnique, fields));
+                return;
+            }
+            indexMetadata.replace(nonUnique, fields);
         }
 
         void addPrimaryKey(String catalog, String schema, String tableName, String primaryKeyName, String columnName) {
@@ -3588,13 +3890,12 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
 
         ColumnMetadata getColumnMetadata(TableInfo tableInfo, String tableName, String columnName) {
-            List<ColumnMetadata> columns = columnsByTableName.get(metadataLookupKey(tableName));
+            List<ColumnMetadata> columns = getColumnMetadataCandidates(tableName, columnName);
             if (columns == null) {
                 return null;
             }
             for (ColumnMetadata column : columns) {
-                if (matches(tableInfo, tableName, column.catalog, column.schema, column.tableName)
-                        && metadataNameMatcher.matchesMetadataName(columnName, column.columnName)) {
+                if (matches(tableInfo, tableName, column.catalog, column.schema, column.tableName)) {
                     return column;
                 }
             }
@@ -3602,7 +3903,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
 
         ColumnMetadata getColumnMetadata(String expectedCatalog, String expectedSchema, String expectedTableName, String columnName) {
-            List<ColumnMetadata> columns = columnsByTableName.get(metadataLookupKey(expectedTableName));
+            List<ColumnMetadata> columns = getColumnMetadataCandidates(expectedTableName, columnName);
             if (columns == null) {
                 return null;
             }
@@ -3627,6 +3928,14 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 }
             }
             return null;
+        }
+
+        private List<ColumnMetadata> getColumnMetadataCandidates(String tableName, String columnName) {
+            Map<String, List<ColumnMetadata>> columnsByColumnName = columnsByTableAndColumnName.get(metadataLookupKey(tableName));
+            if (columnsByColumnName == null) {
+                return null;
+            }
+            return columnsByColumnName.get(metadataLookupKey(columnName));
         }
 
         Set<String> getIndexNames(TableInfo tableInfo) {
@@ -3701,6 +4010,25 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return indexNames;
         }
 
+        boolean indexDefinitionMatches(TableInfo tableInfo, String tableName, IndexInfo expectedIndex) {
+            IndexMetadata actualIndex = getIndexMetadata(tableInfo, tableName, expectedIndex.getName());
+            return actualIndex != null && sameIndexDefinition(expectedIndex, actualIndex);
+        }
+
+        IndexMetadata getIndexMetadata(TableInfo tableInfo, String tableName, String indexName) {
+            List<IndexMetadata> indexes = indexesByTableName.get(metadataLookupKey(tableName));
+            if (indexes == null) {
+                return null;
+            }
+            for (IndexMetadata index : indexes) {
+                if (matches(tableInfo, tableName, index.catalog, index.schema, index.tableName)
+                        && metadataNameMatcher.matchesMetadataName(indexName, index.indexName)) {
+                    return index;
+                }
+            }
+            return null;
+        }
+
         boolean sequenceExists(TableInfo tableInfo, SequenceInfo sequence) {
             List<SequenceMetadata> sequences = sequencesByName.get(metadataLookupKey(sequence.getName()));
             if (sequences == null) {
@@ -3721,6 +4049,15 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 map.put(key, values);
             }
             values.add(value);
+        }
+
+        private <T> void putColumn(Map<String, Map<String, List<T>>> map, String tableKey, String columnKey, T value) {
+            Map<String, List<T>> columns = map.get(tableKey);
+            if (columns == null) {
+                columns = new LinkedHashMap<>();
+                map.put(tableKey, columns);
+            }
+            put(columns, columnKey, value);
         }
 
         private boolean matches(TableInfo tableInfo, String actualCatalog, String actualSchema, String actualTableName) {
@@ -3775,6 +4112,38 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 }
             }
             return null;
+        }
+
+        private boolean sameIndexDefinition(IndexInfo expectedIndex, IndexMetadata actualIndex) {
+            if (expectedIndex.isUnique() == actualIndex.nonUnique) {
+                return false;
+            }
+            List<IndexInfo.Field> expectedFields = expectedIndex.getFields();
+            List<IndexFieldMetadata> actualFields = actualIndex.fields;
+            if (expectedFields.size() != actualFields.size()) {
+                return false;
+            }
+            for (int i = 0; i < expectedFields.size(); i++) {
+                IndexInfo.Field expectedField = expectedFields.get(i);
+                IndexFieldMetadata actualField = actualFields.get(i);
+                if (!metadataNameMatcher.matchesMetadataName(expectedField.getColumnName(), actualField.columnName)
+                        || !sameIndexDirection(expectedField.getDirection(), actualField.direction)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private boolean sameIndexDirection(IndexDirection expectedDirection, IndexDirection actualDirection) {
+            IndexDirection expected = expectedDirection == null ? IndexDirection.DEFAULT : expectedDirection;
+            IndexDirection actual = actualDirection == null ? IndexDirection.DEFAULT : actualDirection;
+            if (expected == IndexDirection.DEFAULT) {
+                return actual == IndexDirection.DEFAULT || actual == IndexDirection.ASC;
+            }
+            if (actual == IndexDirection.DEFAULT) {
+                return true;
+            }
+            return expected == actual;
         }
 
         private boolean sameMetadataNames(Collection<String> expectedNames, Collection<String> actualNames) {

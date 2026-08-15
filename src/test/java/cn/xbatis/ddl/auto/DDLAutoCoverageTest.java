@@ -1297,12 +1297,33 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void syncColumnTypeProbeShouldDetectDifferentTypeFamilyMetadata() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "age", "int4", 10, 0, "int4", 10, 0));
+        assertTrue(creator.exposeColumnTypeChangedWithProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "age", "int8", 19, 0, "int4", 10, 0));
+    }
+
+    @Test
     void syncColumnTypeProbeShouldShortCircuitLengthAndPrecisionBeforeTypeProbe() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
         assertTrue(creator.exposeColumnTypeChangedWithoutProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
                 "username", "varchar", 14, 0));
         assertTrue(creator.exposeColumnTypeChangedWithoutProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
                 "amount", "numeric", 18, 6));
+    }
+
+    @Test
+    void syncColumnTypeProbeSpecsShouldOnlyIncludeColumnsNeedingTypeFamilyProbe() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertTrue(creator.exposeColumnTypeProbeSpecKeysForMissingTable(DbType.PGSQL, PostgresqlTypeProbeUser.class).isEmpty());
+        assertTrue(creator.exposeColumnTypeProbeSpecKeys(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "username", "varchar", 14, 0).isEmpty());
+        assertTrue(creator.exposeColumnTypeProbeSpecKeys(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "amount", "numeric", 18, 6).isEmpty());
+        assertEquals(Collections.singleton("INTEGER"), creator.exposeColumnTypeProbeSpecKeys(DbType.PGSQL,
+                PostgresqlTypeProbeUser.class, "age", "int4", 10, 0));
     }
 
     @Test
@@ -1431,6 +1452,41 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void sqlServerColumnRemarksShouldBatchReadExtendedPropertiesBySchema() throws Exception {
+        Map<String, Map<String, String>> remarksByTable = new LinkedHashMap<>();
+        remarksByTable.put("auto_comment_modify_user", Collections.singletonMap("username", "first comment"));
+        remarksByTable.put("auto_comment_modify_user_copy", Collections.singletonMap("username", "second comment"));
+        SqlServerRemarkExecutor creator = SqlServerRemarkExecutor.batch(remarksByTable);
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        rows.add(columnMetadataRow("catalog", "dbo", "auto_comment_modify_user", "username",
+                Types.VARCHAR, "NVARCHAR", 64, 0, DatabaseMetaData.columnNoNulls, null, null, null, null));
+        rows.add(columnMetadataRow("catalog", "dbo", "auto_comment_modify_user_copy", "username",
+                Types.VARCHAR, "NVARCHAR", 64, 0, DatabaseMetaData.columnNoNulls, null, null, null, null));
+        rows.add(columnMetadataRow("catalog", "dbo", "auto_comment_modify_user_plain", "username",
+                Types.VARCHAR, "NVARCHAR", 64, 0, DatabaseMetaData.columnNoNulls, null, null, null, "jdbc comment"));
+
+        DatabaseMetaData metaData = proxy(DatabaseMetaData.class, (proxy, method, args) -> {
+            if ("getDatabaseProductName".equals(method.getName())) {
+                return "Microsoft SQL Server";
+            }
+            if ("getColumns".equals(method.getName())) {
+                return metadataResultSet(rows);
+            }
+            return defaultValue(method.getReturnType());
+        });
+
+        Map<String, String> remarks = creator.exposeColumnRemarksByTable(metaData,
+                Tables.get(CommentModifyUserV2.class), "catalog", "dbo", "username",
+                "auto_comment_modify_user", "auto_comment_modify_user_copy", "auto_comment_modify_user_plain");
+        assertEquals("first comment", remarks.get("auto_comment_modify_user"));
+        assertEquals("second comment", remarks.get("auto_comment_modify_user_copy"));
+        assertEquals("jdbc comment", remarks.get("auto_comment_modify_user_plain"));
+        assertEquals(1, creator.schemaRemarkReadCount);
+        assertEquals(0, creator.remarkReadCount);
+    }
+
+    @Test
     void oracleIdentityColumnShouldUseDataDictionaryWhenJdbcAutoIncrementNo() throws Exception {
         OracleIdentityExecutor creator = new OracleIdentityExecutor(Collections.singletonMap("ID", "YES"));
         Map<String, Object> row = new LinkedHashMap<>();
@@ -1466,6 +1522,46 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void oracleIdentityColumnShouldBatchReadDataDictionaryBySchema() throws Exception {
+        Map<String, Map<String, String>> identityByTable = new LinkedHashMap<>();
+        identityByTable.put("AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER", Collections.singletonMap("ID", "YES"));
+        identityByTable.put("AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_COPY", Collections.singletonMap("ID", "YES"));
+        OracleIdentityExecutor creator = OracleIdentityExecutor.batch(identityByTable);
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        rows.add(columnMetadataRow(null, "SYSTEM", "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER", "ID",
+                Types.NUMERIC, "NUMBER", 19, 0, DatabaseMetaData.columnNoNulls, null, "NO", "NO", null));
+        rows.add(columnMetadataRow(null, "SYSTEM", "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_COPY", "ID",
+                Types.NUMERIC, "NUMBER", 19, 0, DatabaseMetaData.columnNoNulls, null, "NO", "NO", null));
+        rows.add(columnMetadataRow(null, "SYSTEM", "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_MANUAL", "ID",
+                Types.NUMERIC, "NUMBER", 19, 0, DatabaseMetaData.columnNoNulls, null, "NO", "NO", null));
+
+        DatabaseMetaData metaData = proxy(DatabaseMetaData.class, (proxy, method, args) -> {
+            if ("getDatabaseProductName".equals(method.getName())) {
+                return "Oracle";
+            }
+            if ("getDatabaseMajorVersion".equals(method.getName())) {
+                return 19;
+            }
+            if ("getColumns".equals(method.getName())) {
+                return metadataResultSet(rows);
+            }
+            return defaultValue(method.getReturnType());
+        });
+
+        Map<String, String> autoIncrementByTable = creator.exposeColumnAutoIncrementByTable(metaData,
+                Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncModifyAutoIdReverseUserV1.class),
+                null, "SYSTEM", "id",
+                "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER", "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_COPY",
+                "AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_MANUAL");
+        assertEquals("YES", autoIncrementByTable.get("AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER"));
+        assertEquals("YES", autoIncrementByTable.get("AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_COPY"));
+        assertEquals("NO", autoIncrementByTable.get("AUTO_SYNC_MODIFY_AUTO_ID_REVERSE_USER_MANUAL"));
+        assertEquals(1, creator.schemaIdentityReadCount);
+        assertEquals(0, creator.identityReadCount);
+    }
+
+    @Test
     void syncModeShouldIgnoreConstraintIndexesWhenDroppingExtraIndexes() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
         TableInfo tableInfo = Tables.get(DDLAutoExternalDatabaseIntegrationSupport.SyncUserV2.class);
@@ -1492,6 +1588,56 @@ class DDLAutoCoverageTest {
         sqliteExistingIndexes.put("sqlite_autoindex_auto_sync_user_1", TestIndexSpec.unique("id"));
         assertEquals(Collections.singletonList("DROP INDEX idx_sync_legacy_code;"),
                 creator.exposeDropIndexSqlList(DbType.SQLITE, tableInfo, "auto_sync_user", sqliteExistingIndexes));
+    }
+
+    @Test
+    void syncModeShouldRebuildSameNameIndexWhenDefinitionChanged() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        TableInfo tableInfo = Tables.get(SyncIndexDefinitionUser.class);
+        String tableName = "auto_sync_index_definition_user";
+        String indexName = "idx_sync_definition_name_email";
+        String dropSql = "DROP INDEX idx_sync_definition_name_email;";
+        String createSql = "CREATE INDEX idx_sync_definition_name_email ON auto_sync_index_definition_user (username ASC, email DESC);";
+
+        Map<String, TestIndexSpec> matchedIndexes = new LinkedHashMap<>();
+        matchedIndexes.put(indexName, TestIndexSpec.nonUnique(
+                TestIndexSpec.field("username", IndexDirection.ASC),
+                TestIndexSpec.field("email", IndexDirection.DESC)));
+        assertTrue(creator.exposeDropIndexSqlList(DbType.H2, tableInfo, tableName, matchedIndexes).isEmpty());
+        assertTrue(creator.exposeAddIndexSqlList(DbType.H2, tableInfo, tableName, matchedIndexes).isEmpty());
+        assertTrue(creator.exposeAddChangedIndexSqlList(DbType.H2, tableInfo, tableName, matchedIndexes).isEmpty());
+
+        Map<String, TestIndexSpec> orderChangedIndexes = new LinkedHashMap<>();
+        orderChangedIndexes.put(indexName, TestIndexSpec.nonUnique(
+                TestIndexSpec.field("email", IndexDirection.DESC),
+                TestIndexSpec.field("username", IndexDirection.ASC)));
+        assertEquals(Collections.singletonList(dropSql),
+                creator.exposeDropIndexSqlList(DbType.H2, tableInfo, tableName, orderChangedIndexes));
+        assertEquals(Collections.singletonList(createSql),
+                creator.exposeAddChangedIndexSqlList(DbType.H2, tableInfo, tableName, orderChangedIndexes));
+
+        Map<String, TestIndexSpec> uniqueChangedIndexes = new LinkedHashMap<>();
+        uniqueChangedIndexes.put(indexName, TestIndexSpec.unique(
+                TestIndexSpec.field("username", IndexDirection.ASC),
+                TestIndexSpec.field("email", IndexDirection.DESC)));
+        assertEquals(Collections.singletonList(dropSql),
+                creator.exposeDropIndexSqlList(DbType.H2, tableInfo, tableName, uniqueChangedIndexes));
+        assertEquals(Collections.singletonList(createSql),
+                creator.exposeAddChangedIndexSqlList(DbType.H2, tableInfo, tableName, uniqueChangedIndexes));
+
+        Map<String, TestIndexSpec> directionChangedIndexes = new LinkedHashMap<>();
+        directionChangedIndexes.put(indexName, TestIndexSpec.nonUnique(
+                TestIndexSpec.field("username", IndexDirection.ASC),
+                TestIndexSpec.field("email", IndexDirection.ASC)));
+        assertEquals(Collections.singletonList(dropSql),
+                creator.exposeDropIndexSqlList(DbType.H2, tableInfo, tableName, directionChangedIndexes));
+        assertEquals(Collections.singletonList(createSql),
+                creator.exposeAddChangedIndexSqlList(DbType.H2, tableInfo, tableName, directionChangedIndexes));
+        assertTrue(creator.exposeAddIndexSqlList(DbType.ORACLE, tableInfo, tableName, directionChangedIndexes).isEmpty());
+        List<List<String>> repeatedAddSqlList = creator.exposeRepeatedAddIndexSqlLists(DbType.H2, tableInfo, tableName,
+                directionChangedIndexes);
+        assertEquals(Collections.singletonList(createSql), repeatedAddSqlList.get(0));
+        assertTrue(repeatedAddSqlList.get(1).isEmpty());
     }
 
     @Test
@@ -2175,13 +2321,37 @@ class DDLAutoCoverageTest {
         }
 
         List<String> exposeDropIndexSqlList(IDbType dbType, TableInfo tableInfo, String tableName, Map<String, TestIndexSpec> indexes) {
+            DatabaseMetadata databaseMetadata = databaseMetadataWithIndexes(tableName, indexes);
+            return createDropIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
+        List<String> exposeAddIndexSqlList(IDbType dbType, TableInfo tableInfo, String tableName, Map<String, TestIndexSpec> indexes) {
+            DatabaseMetadata databaseMetadata = databaseMetadataWithIndexes(tableName, indexes);
+            return createAddIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
+        List<String> exposeAddChangedIndexSqlList(IDbType dbType, TableInfo tableInfo, String tableName, Map<String, TestIndexSpec> indexes) {
+            DatabaseMetadata databaseMetadata = databaseMetadataWithIndexes(tableName, indexes);
+            return createAddChangedIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+        }
+
+        List<List<String>> exposeRepeatedAddIndexSqlLists(IDbType dbType, TableInfo tableInfo, String tableName, Map<String, TestIndexSpec> indexes) {
+            DatabaseMetadata databaseMetadata = databaseMetadataWithIndexes(tableName, indexes);
+            EntityDDLMetadata entityMetadata = entityMetadata(dbType, tableInfo);
+            List<List<String>> result = new ArrayList<>();
+            result.add(createAddChangedIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+            result.add(createAddChangedIndexSqlList(dbType, entityMetadata, tableName, databaseMetadata));
+            return result;
+        }
+
+        private DatabaseMetadata databaseMetadataWithIndexes(String tableName, Map<String, TestIndexSpec> indexes) {
             DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
             databaseMetadata.addTable("catalog", null, tableName);
             databaseMetadata.addPrimaryKey("catalog", null, tableName, "PRIMARY", "id");
             for (Map.Entry<String, TestIndexSpec> entry : indexes.entrySet()) {
-                databaseMetadata.addIndex("catalog", null, tableName, entry.getKey(), entry.getValue().nonUnique, entry.getValue().columnNames);
+                entry.getValue().addTo(databaseMetadata, "catalog", null, tableName, entry.getKey());
             }
-            return createDropIndexSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+            return databaseMetadata;
         }
 
         List<String> exposeCommentModifySqlList(IDbType dbType, Class<?> entityClass, String tableName, String existingComment) {
@@ -2385,6 +2555,27 @@ class DDLAutoCoverageTest {
             return columnTypeChanged(dbType, column, actualColumnMetadata, databaseMetadata);
         }
 
+        Set<String> exposeColumnTypeProbeSpecKeysForMissingTable(IDbType dbType, Class<?> entityClass) {
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            EntityDDLMetadata entityMetadata = entityMetadata(dbType, Tables.get(entityClass));
+            return columnTypeProbeSpecs(dbType, Collections.singletonList(entityMetadata), databaseMetadata).keySet();
+        }
+
+        Set<String> exposeColumnTypeProbeSpecKeys(IDbType dbType,
+                                                  Class<?> entityClass,
+                                                  String columnName,
+                                                  String actualTypeName,
+                                                  int actualSize,
+                                                  int actualScale) {
+            TableInfo tableInfo = Tables.get(entityClass);
+            EntityDDLMetadata entityMetadata = entityMetadata(dbType, tableInfo);
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.addTable("catalog", null, tableInfo.getTableName());
+            databaseMetadata.addColumn("catalog", null, tableInfo.getTableName(), columnName, Types.OTHER,
+                    actualTypeName, actualSize, actualScale, DatabaseMetaData.columnNullable, null, null, null, null);
+            return columnTypeProbeSpecs(dbType, Collections.singletonList(entityMetadata), databaseMetadata).keySet();
+        }
+
         boolean exposeColumnTypeChangedWithoutProbe(IDbType dbType,
                                                     Class<?> entityClass,
                                                     String columnName,
@@ -2559,10 +2750,23 @@ class DDLAutoCoverageTest {
 
         private final Map<String, String> columnRemarks;
 
+        private final Map<String, Map<String, String>> columnRemarksByTable;
+
         private int remarkReadCount;
 
+        private int schemaRemarkReadCount;
+
         SqlServerRemarkExecutor(Map<String, String> columnRemarks) {
+            this(columnRemarks, Collections.emptyMap());
+        }
+
+        private SqlServerRemarkExecutor(Map<String, String> columnRemarks, Map<String, Map<String, String>> columnRemarksByTable) {
             this.columnRemarks = columnRemarks;
+            this.columnRemarksByTable = columnRemarksByTable;
+        }
+
+        static SqlServerRemarkExecutor batch(Map<String, Map<String, String>> columnRemarksByTable) {
+            return new SqlServerRemarkExecutor(Collections.emptyMap(), columnRemarksByTable);
         }
 
         String exposeColumnRemark(DatabaseMetaData metaData, TableInfo tableInfo, String catalog, String schema, String tableName, String columnName) throws SQLException {
@@ -2570,6 +2774,35 @@ class DDLAutoCoverageTest {
             readColumnMetadata(metaData, catalog, schema, tableName, databaseMetadata);
             ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, columnName);
             return columnMetadata == null ? null : columnMetadata.getRemarks();
+        }
+
+        Map<String, String> exposeColumnRemarksByTable(DatabaseMetaData metaData,
+                                                       TableInfo tableInfo,
+                                                       String catalog,
+                                                       String schema,
+                                                       String columnName,
+                                                       String... tableNames) throws SQLException {
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata(catalog, schema);
+            readColumnMetadata(metaData, catalog, schema, null, databaseMetadata);
+            Map<String, String> remarksByTable = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, columnName);
+                remarksByTable.put(tableName, columnMetadata == null ? null : columnMetadata.getRemarks());
+            }
+            return remarksByTable;
+        }
+
+        @Override
+        protected Map<String, Map<String, String>> readSqlServerColumnRemarksBySchema(DatabaseMetaData metaData, String catalog, String schema) {
+            schemaRemarkReadCount++;
+            Map<String, Map<String, String>> result = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<String, String>> tableEntry : columnRemarksByTable.entrySet()) {
+                for (Map.Entry<String, String> columnEntry : tableEntry.getValue().entrySet()) {
+                    putColumnMetadataValue(result, metadataReadKey(catalog, schema, tableEntry.getKey()),
+                            columnEntry.getKey(), columnEntry.getValue());
+                }
+            }
+            return result;
         }
 
         @Override
@@ -2587,10 +2820,23 @@ class DDLAutoCoverageTest {
 
         private final Map<String, String> identityColumns;
 
+        private final Map<String, Map<String, String>> identityColumnsByTable;
+
         private int identityReadCount;
 
+        private int schemaIdentityReadCount;
+
         OracleIdentityExecutor(Map<String, String> identityColumns) {
+            this(identityColumns, Collections.emptyMap());
+        }
+
+        private OracleIdentityExecutor(Map<String, String> identityColumns, Map<String, Map<String, String>> identityColumnsByTable) {
             this.identityColumns = identityColumns;
+            this.identityColumnsByTable = identityColumnsByTable;
+        }
+
+        static OracleIdentityExecutor batch(Map<String, Map<String, String>> identityColumnsByTable) {
+            return new OracleIdentityExecutor(Collections.emptyMap(), identityColumnsByTable);
         }
 
         String exposeColumnIsAutoIncrement(DatabaseMetaData metaData, TableInfo tableInfo, String catalog, String schema, String tableName, String columnName) throws SQLException {
@@ -2598,6 +2844,35 @@ class DDLAutoCoverageTest {
             readColumnMetadata(metaData, catalog, schema, tableName, databaseMetadata);
             ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, columnName);
             return columnMetadata == null ? null : columnMetadata.getIsAutoIncrement();
+        }
+
+        Map<String, String> exposeColumnAutoIncrementByTable(DatabaseMetaData metaData,
+                                                             TableInfo tableInfo,
+                                                             String catalog,
+                                                             String schema,
+                                                             String columnName,
+                                                             String... tableNames) throws SQLException {
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata(catalog, schema);
+            readColumnMetadata(metaData, catalog, schema, null, databaseMetadata);
+            Map<String, String> autoIncrementByTable = new LinkedHashMap<>();
+            for (String tableName : tableNames) {
+                ColumnMetadata columnMetadata = databaseMetadata.getColumnMetadata(tableInfo, tableName, columnName);
+                autoIncrementByTable.put(tableName, columnMetadata == null ? null : columnMetadata.getIsAutoIncrement());
+            }
+            return autoIncrementByTable;
+        }
+
+        @Override
+        protected Map<String, Map<String, String>> readOracleIdentityColumnsBySchema(DatabaseMetaData metaData, String catalog, String schema) {
+            schemaIdentityReadCount++;
+            Map<String, Map<String, String>> result = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<String, String>> tableEntry : identityColumnsByTable.entrySet()) {
+                for (Map.Entry<String, String> columnEntry : tableEntry.getValue().entrySet()) {
+                    putColumnMetadataValue(result, metadataReadKey(catalog, schema, tableEntry.getKey()),
+                            columnEntry.getKey(), columnEntry.getValue());
+                }
+            }
+            return result;
         }
 
         @Override
@@ -2613,19 +2888,61 @@ class DDLAutoCoverageTest {
 
     static class TestIndexSpec {
         final boolean nonUnique;
-        final List<String> columnNames;
+        final List<TestIndexFieldSpec> fields;
 
-        private TestIndexSpec(boolean nonUnique, List<String> columnNames) {
+        private TestIndexSpec(boolean nonUnique, List<TestIndexFieldSpec> fields) {
             this.nonUnique = nonUnique;
-            this.columnNames = columnNames;
+            this.fields = fields;
         }
 
         static TestIndexSpec unique(String... columnNames) {
-            return new TestIndexSpec(false, Arrays.asList(columnNames));
+            return unique(fields(columnNames));
         }
 
         static TestIndexSpec nonUnique(String... columnNames) {
-            return new TestIndexSpec(true, Arrays.asList(columnNames));
+            return nonUnique(fields(columnNames));
+        }
+
+        static TestIndexSpec unique(TestIndexFieldSpec... fields) {
+            return new TestIndexSpec(false, Arrays.asList(fields));
+        }
+
+        static TestIndexSpec nonUnique(TestIndexFieldSpec... fields) {
+            return new TestIndexSpec(true, Arrays.asList(fields));
+        }
+
+        static TestIndexFieldSpec field(String columnName, IndexDirection direction) {
+            return new TestIndexFieldSpec(columnName, direction);
+        }
+
+        private static TestIndexFieldSpec[] fields(String... columnNames) {
+            TestIndexFieldSpec[] fields = new TestIndexFieldSpec[columnNames.length];
+            for (int i = 0; i < columnNames.length; i++) {
+                fields[i] = field(columnNames[i], IndexDirection.DEFAULT);
+            }
+            return fields;
+        }
+
+        void addTo(DefaultDDLAutoExecutor.DatabaseMetadata databaseMetadata,
+                   String catalog,
+                   String schema,
+                   String tableName,
+                   String indexName) {
+            for (int i = 0; i < fields.size(); i++) {
+                TestIndexFieldSpec field = fields.get(i);
+                databaseMetadata.addIndex(catalog, schema, tableName, indexName, nonUnique,
+                        field.columnName, i + 1, field.direction);
+            }
+        }
+    }
+
+    static class TestIndexFieldSpec {
+        final String columnName;
+        final IndexDirection direction;
+
+        private TestIndexFieldSpec(String columnName, IndexDirection direction) {
+            this.columnName = columnName;
+            this.direction = direction;
         }
     }
 
@@ -2944,6 +3261,36 @@ class DDLAutoCoverageTest {
         });
     }
 
+    private static Map<String, Object> columnMetadataRow(String catalog,
+                                                         String schema,
+                                                         String tableName,
+                                                         String columnName,
+                                                         int dataType,
+                                                         String typeName,
+                                                         int columnSize,
+                                                         int decimalDigits,
+                                                         int nullable,
+                                                         String columnDefault,
+                                                         String isAutoIncrement,
+                                                         String isGeneratedColumn,
+                                                         String remarks) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("TABLE_CAT", catalog);
+        row.put("TABLE_SCHEM", schema);
+        row.put("TABLE_NAME", tableName);
+        row.put("COLUMN_NAME", columnName);
+        row.put("DATA_TYPE", dataType);
+        row.put("TYPE_NAME", typeName);
+        row.put("COLUMN_SIZE", columnSize);
+        row.put("DECIMAL_DIGITS", decimalDigits);
+        row.put("NULLABLE", nullable);
+        row.put("COLUMN_DEF", columnDefault);
+        row.put("IS_AUTOINCREMENT", isAutoIncrement);
+        row.put("IS_GENERATEDCOLUMN", isGeneratedColumn);
+        row.put("REMARKS", remarks);
+        return row;
+    }
+
     private static ResultSet metadataResultSet(List<Map<String, Object>> rows) {
         final int[] index = {-1};
         return proxy(ResultSet.class, (proxy, method, args) -> {
@@ -2961,6 +3308,13 @@ class DDLAutoCoverageTest {
                     return ((Number) value).intValue();
                 }
                 return value == null ? 0 : Integer.parseInt(String.valueOf(value));
+            }
+            if ("getBoolean".equals(method.getName())) {
+                Object value = rows.get(index[0]).get((String) args[0]);
+                if (value instanceof Boolean) {
+                    return value;
+                }
+                return value != null && Boolean.parseBoolean(String.valueOf(value));
             }
             return defaultValue(method.getReturnType());
         });
@@ -3438,6 +3792,23 @@ class DDLAutoCoverageTest {
 
         @ColumnDefinition(length = 64, nullable = false, comment = "new comment")
         private String username;
+    }
+
+    @Table("auto_sync_index_definition_user")
+    @Index(name = "idx_sync_definition_name_email", fields = {
+            @IndexField(name = "username", direction = IndexDirection.ASC),
+            @IndexField(name = "email", direction = IndexDirection.DESC)
+    })
+    static class SyncIndexDefinitionUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+
+        @ColumnDefinition(length = 128)
+        private String email;
     }
 
     @Table("auto_long_unique_name_user_with_an_extra_long_name")
