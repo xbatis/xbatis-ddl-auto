@@ -844,6 +844,31 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
+     * 部分数据库的 schema 级列/索引元数据查询会扫描大量系统表，实体较多时也优先按目标表精确读取。
+     */
+    protected boolean shouldBatchReadSchemaMetadata(DatabaseMetaData metaData, Collection<TableInfo> tableInfos) throws SQLException {
+        return shouldBatchReadSchemaMetadata(tableInfos) && supportsSchemaBatchMetadata(metaData);
+    }
+
+    /**
+     * 判断当前数据库是否适合按 schema 批量读取表、列和索引元数据。
+     */
+    protected boolean supportsSchemaBatchMetadata(DatabaseMetaData metaData) throws SQLException {
+        if (metaData == null) {
+            return true;
+        }
+        String productName = metaData.getDatabaseProductName();
+        if (productName == null) {
+            return true;
+        }
+        String normalizedProductName = productName.toLowerCase(Locale.ROOT);
+        return !normalizedProductName.contains("postgresql")
+                && !normalizedProductName.contains("opengauss")
+                && !normalizedProductName.contains("kingbase")
+                && !normalizedProductName.contains("highgo");
+    }
+
+    /**
      * 统计实体解析后的物理表数量。
      */
     protected int physicalTableCount(Collection<TableInfo> tableInfos) {
@@ -874,7 +899,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      * 按实体表名读取数据表和视图，避免扫描整个 schema。
      */
     protected void readEntityTables(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata, Collection<TableInfo> tableInfos) throws SQLException {
-        if (shouldBatchReadSchemaMetadata(tableInfos)) {
+        if (shouldBatchReadSchemaMetadata(metaData, tableInfos)) {
             readTables(metaData, databaseMetadata, schemas(tableInfos, databaseMetadata.defaultSchema));
             return;
         }
@@ -887,13 +912,28 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 schemaCandidates.add(null);
             }
             for (String physicalTableName : resolveTableNames(tableInfo)) {
+                if (databaseMetadata.objectType(tableInfo, physicalTableName) != OBJECT_NOT_EXISTS) {
+                    continue;
+                }
                 Set<String> tableCandidates = candidates(physicalTableName);
+                boolean tableResolved = false;
                 for (String schemaCandidate : schemaCandidates) {
                     for (String tableName : tableCandidates) {
                         readTableMetadataIfNecessary(metaData, databaseMetadata.catalog, schemaCandidate, tableName, databaseMetadata, readKeys);
+                        if (databaseMetadata.objectType(tableInfo, physicalTableName) != OBJECT_NOT_EXISTS) {
+                            tableResolved = true;
+                            break;
+                        }
                         if (schemaCandidate != null && schemaAsCatalogFallback) {
                             readTableMetadataIfNecessary(metaData, schemaCandidate, null, tableName, databaseMetadata, readKeys);
+                            if (databaseMetadata.objectType(tableInfo, physicalTableName) != OBJECT_NOT_EXISTS) {
+                                tableResolved = true;
+                                break;
+                            }
                         }
+                    }
+                    if (tableResolved) {
+                        break;
                     }
                 }
             }
@@ -940,14 +980,27 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     protected void readTableMetadata(DatabaseMetaData metaData, String catalog, String schema, String tableName, DatabaseMetadata databaseMetadata) throws SQLException {
         try (ResultSet resultSet = metaData.getTables(catalog, schema, tableName, TABLE_AND_VIEW_TYPES)) {
             while (resultSet.next()) {
+                String actualCatalog = getString(resultSet, "TABLE_CAT");
+                String actualSchema = getString(resultSet, "TABLE_SCHEM");
+                String actualTableName = getString(resultSet, "TABLE_NAME");
                 databaseMetadata.addTable(
-                        getString(resultSet, "TABLE_CAT"),
-                        getString(resultSet, "TABLE_SCHEM"),
-                        getString(resultSet, "TABLE_NAME"),
-                        getString(resultSet, "TABLE_TYPE")
+                        actualCatalog,
+                        actualSchema,
+                        actualTableName,
+                        getString(resultSet, "TABLE_TYPE"),
+                        metadataReadValue(actualCatalog, catalog),
+                        metadataReadValue(actualSchema, schema),
+                        metadataReadValue(actualTableName, tableName)
                 );
             }
         }
+    }
+
+    /**
+     * JDBC 元数据行缺少 catalog/schema/table 时，继续使用本次成功查询的入参。
+     */
+    protected String metadataReadValue(String actualValue, String queryValue) {
+        return isBlank(actualValue) ? queryValue : actualValue;
     }
 
     /**
@@ -1123,7 +1176,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      * 按 schema 分组读取数据列。
      */
     protected void readColumns(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata, Collection<TableInfo> tableInfos) throws SQLException {
-        if (shouldBatchReadSchemaMetadata(tableInfos) && readColumnsBySchema(metaData, databaseMetadata, tableInfos)) {
+        if (shouldBatchReadSchemaMetadata(metaData, tableInfos) && readColumnsBySchema(metaData, databaseMetadata, tableInfos)) {
             return;
         }
         readColumnsByEntity(metaData, databaseMetadata, tableInfos);
@@ -1137,11 +1190,28 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         boolean schemaAsCatalogFallback = supportsSchemaAsCatalogFallback(metaData);
         for (TableInfo tableInfo : tableInfos) {
             for (String tableName : resolveTableNames(tableInfo)) {
+                if (readColumnsByResolvedTable(metaData, databaseMetadata, tableInfo, tableName, readKeys)) {
+                    continue;
+                }
                 if (databaseMetadata.objectType(tableInfo, tableName) == OBJECT_TABLE) {
                     readColumns(metaData, databaseMetadata, tableInfo, tableName, readKeys, schemaAsCatalogFallback);
                 }
             }
         }
+    }
+
+    /**
+     * 复用表元数据命中的真实读取目标，避免列元数据再次按 schema/table 大小写候选重复探测。
+     */
+    protected boolean readColumnsByResolvedTable(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata,
+                                                 TableInfo tableInfo, String tableName, Set<String> readKeys) throws SQLException {
+        TableMetadata tableMetadata = databaseMetadata.getTableMetadata(tableInfo, tableName);
+        if (tableMetadata == null || !TABLE_TYPE.equals(tableMetadata.tableType)) {
+            return false;
+        }
+        readColumnMetadataIfNecessary(metaData, tableMetadata.metadataCatalog, tableMetadata.metadataSchema,
+                tableMetadata.metadataTableName, databaseMetadata, readKeys);
+        return true;
     }
 
     /**
@@ -1422,7 +1492,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      * 按 schema 分组读取数据索引。
      */
     protected void readIndexes(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata, Collection<TableInfo> tableInfos) throws SQLException {
-        if (shouldBatchReadSchemaMetadata(tableInfos) && readIndexesBySchema(metaData, databaseMetadata, tableInfos)) {
+        if (shouldBatchReadSchemaMetadata(metaData, tableInfos) && readIndexesBySchema(metaData, databaseMetadata, tableInfos)) {
             return;
         }
         readIndexesByEntity(metaData, databaseMetadata, tableInfos);
@@ -1436,11 +1506,28 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         boolean schemaAsCatalogFallback = supportsSchemaAsCatalogFallback(metaData);
         for (TableInfo tableInfo : tableInfos) {
             for (String tableName : resolveTableNames(tableInfo)) {
+                if (readIndexesByResolvedTable(metaData, databaseMetadata, tableInfo, tableName, readKeys)) {
+                    continue;
+                }
                 if (databaseMetadata.objectType(tableInfo, tableName) == OBJECT_TABLE) {
                     readIndexes(metaData, databaseMetadata, tableInfo, tableName, readKeys, schemaAsCatalogFallback);
                 }
             }
         }
+    }
+
+    /**
+     * 复用表元数据命中的真实读取目标，避免索引元数据再次按 schema/table 大小写候选重复探测。
+     */
+    protected boolean readIndexesByResolvedTable(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata,
+                                                 TableInfo tableInfo, String tableName, Set<String> readKeys) throws SQLException {
+        TableMetadata tableMetadata = databaseMetadata.getTableMetadata(tableInfo, tableName);
+        if (tableMetadata == null || !TABLE_TYPE.equals(tableMetadata.tableType)) {
+            return false;
+        }
+        readIndexMetadataIfNecessary(metaData, tableMetadata.metadataCatalog, tableMetadata.metadataSchema,
+                tableMetadata.metadataTableName, databaseMetadata, readKeys);
+        return true;
     }
 
     /**
@@ -1541,11 +1628,28 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         boolean schemaAsCatalogFallback = supportsSchemaAsCatalogFallback(metaData);
         for (TableInfo tableInfo : tableInfos) {
             for (String tableName : resolveTableNames(tableInfo)) {
+                if (readPrimaryKeysByResolvedTable(metaData, databaseMetadata, tableInfo, tableName, readKeys)) {
+                    continue;
+                }
                 if (databaseMetadata.objectType(tableInfo, tableName) == OBJECT_TABLE) {
                     readPrimaryKeys(metaData, databaseMetadata, tableInfo, tableName, readKeys, schemaAsCatalogFallback);
                 }
             }
         }
+    }
+
+    /**
+     * 复用表元数据命中的真实读取目标，避免主键元数据再次按 schema/table 大小写候选重复探测。
+     */
+    protected boolean readPrimaryKeysByResolvedTable(DatabaseMetaData metaData, DatabaseMetadata databaseMetadata,
+                                                     TableInfo tableInfo, String tableName, Set<String> readKeys) throws SQLException {
+        TableMetadata tableMetadata = databaseMetadata.getTableMetadata(tableInfo, tableName);
+        if (tableMetadata == null || !TABLE_TYPE.equals(tableMetadata.tableType)) {
+            return false;
+        }
+        readPrimaryKeyMetadataIfNecessary(metaData, tableMetadata.metadataCatalog, tableMetadata.metadataSchema,
+                tableMetadata.metadataTableName, databaseMetadata, readKeys);
+        return true;
     }
 
     /**
@@ -2016,9 +2120,6 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             return !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
         }
         if (isLengthType(expectedTypeFamilyKey)) {
-            if (expectedType.contains("NVARCHAR(MAX)") && actualType.startsWith("NVARCHAR")) {
-                return false;
-            }
             return !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
         }
         return false;
@@ -2329,6 +2430,12 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (isBlank(typeName)) {
             return "";
         }
+        if (dialect.isMysql(dbType) && "BOOLEAN".equals(typeName)) {
+            return "TINYINT(1)";
+        }
+        if (dialect.isMysql(dbType) && "BIT".equals(typeName) && columnMetadata.getColumnSize() == 1) {
+            return "TINYINT(1)";
+        }
         StringBuilder signature = new StringBuilder(typeName);
         if (isPrecisionScaleType(typeName)) {
             int precision = columnMetadata.getColumnSize();
@@ -2345,13 +2452,31 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (isLengthType(typeName)) {
             int size = columnMetadata.getColumnSize();
             if (size > 0 && !typeName.endsWith("(MAX)")) {
-                signature.append("(").append(size).append(")");
+                if (isSqlServerMaxLengthMetadata(dbType, typeName, size)) {
+                    signature.append("(MAX)");
+                } else {
+                    signature.append("(").append(size).append(")");
+                }
             }
         }
         if (dialect.isMysql(dbType) && "TINYINT".equals(typeName) && columnMetadata.getColumnSize() == 1) {
             return "TINYINT(1)";
         }
         return signature.toString();
+    }
+
+    protected boolean isSqlServerMaxLengthMetadata(IDbType dbType, String typeName, int size) {
+        if (dbType != DbType.SQL_SERVER || size <= 0 || isBlank(typeName)) {
+            return false;
+        }
+        String typeFamily = columnTypeFamilyKey(dbType, typeName);
+        if ("NVARCHAR".equals(typeFamily)) {
+            return size > 4000;
+        }
+        if ("VARCHAR".equals(typeFamily) || "VARBINARY".equals(typeFamily)) {
+            return size > 8000;
+        }
+        return false;
     }
 
     /**
@@ -2431,6 +2556,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             normalized = "INTEGER" + normalized.substring("SERIAL".length());
         } else if (normalized.startsWith("INT2")) {
             normalized = "SMALLINT" + normalized.substring("INT2".length());
+        } else if (normalized.startsWith("BOOLEAN")) {
+            normalized = "BOOLEAN" + normalized.substring("BOOLEAN".length());
         } else if (normalized.startsWith("BOOL")) {
             normalized = "BOOLEAN" + normalized.substring("BOOL".length());
         } else if (normalized.startsWith("TIMESTAMP WITHOUT TIME ZONE")) {
@@ -2530,6 +2657,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         if (normalized.startsWith("INT2")) {
             return "SMALLINT";
         }
+        if (normalized.startsWith("BOOLEAN")) {
+            return "BOOLEAN";
+        }
         if (normalized.startsWith("BOOL")) {
             return "BOOLEAN";
         }
@@ -2547,6 +2677,9 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      */
     protected boolean isLengthType(String typeName) {
         String normalized = typeName == null ? "" : typeName.toUpperCase(Locale.ROOT);
+        if (normalized.startsWith("BINARY_FLOAT") || normalized.startsWith("BINARY_DOUBLE")) {
+            return false;
+        }
         return normalized.startsWith("CHAR")
                 || normalized.startsWith("NCHAR")
                 || normalized.startsWith("VARCHAR")
@@ -2751,14 +2884,22 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
-     * 部分数据库驱动把 schema 放在 catalog 位置返回；SQL Server 的 catalog 是数据库名，不能把 dbo 当 database 再查。
+     * 部分数据库驱动把 schema 放在 catalog 位置返回；明确使用 schema 的数据库不需要额外按 catalog 重查。
      */
     protected boolean supportsSchemaAsCatalogFallback(DatabaseMetaData metaData) throws SQLException {
         if (metaData == null) {
             return true;
         }
         String productName = metaData.getDatabaseProductName();
-        return productName == null || !productName.toLowerCase(Locale.ROOT).contains("sql server");
+        if (productName == null) {
+            return true;
+        }
+        String normalizedProductName = productName.toLowerCase(Locale.ROOT);
+        return !normalizedProductName.contains("sql server")
+                && !normalizedProductName.contains("postgresql")
+                && !normalizedProductName.contains("opengauss")
+                && !normalizedProductName.contains("kingbase")
+                && !normalizedProductName.contains("highgo");
     }
 
     /**
@@ -3049,11 +3190,25 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final String tableType;
 
+        private final String metadataCatalog;
+
+        private final String metadataSchema;
+
+        private final String metadataTableName;
+
         TableMetadata(String catalog, String schema, String tableName, String tableType) {
+            this(catalog, schema, tableName, tableType, catalog, schema, tableName);
+        }
+
+        TableMetadata(String catalog, String schema, String tableName, String tableType,
+                      String metadataCatalog, String metadataSchema, String metadataTableName) {
             this.catalog = catalog;
             this.schema = schema;
             this.tableName = tableName;
             this.tableType = tableType;
+            this.metadataCatalog = metadataCatalog;
+            this.metadataSchema = metadataSchema;
+            this.metadataTableName = metadataTableName;
         }
     }
 
@@ -3242,7 +3397,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
 
         void addTable(String catalog, String schema, String tableName, String tableType) {
-            put(tablesByName, metadataLookupKey(tableName), new TableMetadata(catalog, schema, tableName, normalizeTableType(tableType)));
+            addTable(catalog, schema, tableName, tableType, catalog, schema, tableName);
+        }
+
+        void addTable(String catalog, String schema, String tableName, String tableType,
+                      String metadataCatalog, String metadataSchema, String metadataTableName) {
+            put(tablesByName, metadataLookupKey(tableName), new TableMetadata(catalog, schema, tableName,
+                    normalizeTableType(tableType), metadataCatalog, metadataSchema, metadataTableName));
         }
 
         void addColumns(TableInfo tableInfo, Collection<ColumnInfo> addColumns) {
@@ -3360,6 +3521,26 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 }
             }
             return objectType;
+        }
+
+        TableMetadata getTableMetadata(TableInfo tableInfo, String tableName) {
+            List<TableMetadata> tables = tablesByName.get(metadataLookupKey(tableName));
+            if (tables == null) {
+                return null;
+            }
+            TableMetadata view = null;
+            for (TableMetadata table : tables) {
+                if (!matches(tableInfo, tableName, table.catalog, table.schema, table.tableName)) {
+                    continue;
+                }
+                if (TABLE_TYPE.equals(table.tableType)) {
+                    return table;
+                }
+                if (view == null && VIEW_TYPE.equals(table.tableType)) {
+                    view = table;
+                }
+            }
+            return view;
         }
 
         private String normalizeTableType(String tableType) {

@@ -242,6 +242,40 @@ class DDLAutoMysqlIntegrationTest {
     }
 
     @Test
+    void mysqlShouldCreateColumnTypeMatrix() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertColumnTypeMatrixFlow(
+                    DbType.MYSQL,
+                    connection,
+                    "short_text VARCHAR(64)",
+                    "large_text VARCHAR(5000)",
+                    "int_value INTEGER",
+                    "long_value BIGINT",
+                    "big_number BIGINT",
+                    "short_value SMALLINT",
+                    "byte_value TINYINT",
+                    "enabled TINYINT(1)",
+                    "amount DECIMAL(12,4)",
+                    "ratio REAL",
+                    "score DOUBLE",
+                    "grade VARCHAR(1)",
+                    "payload BLOB",
+                    "biz_date DATE",
+                    "biz_time TIME",
+                    "sql_date DATE",
+                    "sql_time TIME",
+                    "created_at DATETIME",
+                    "sql_created_at DATETIME",
+                    "legacy_created_at DATETIME",
+                    "event_at TIMESTAMP",
+                    "offset_at TIMESTAMP",
+                    "zoned_at TIMESTAMP",
+                    "request_id VARCHAR(36)"
+            );
+        }
+    }
+
+    @Test
     void mysqlShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(

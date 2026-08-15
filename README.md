@@ -34,7 +34,7 @@ xbatis-ddl-auto 是一个基于 xbatis 实体元数据的轻量自动建表工�
 <dependency>
     <groupId>cn.xbatis</groupId>
     <artifactId>xbatis-ddl-auto</artifactId>
-    <version>1.0.1</version>
+    <version>1.10.2</version>
 </dependency>
 ```
 
@@ -44,7 +44,7 @@ xbatis-ddl-auto 是一个基于 xbatis 实体元数据的轻量自动建表工�
 <dependency>
     <groupId>cn.xbatis</groupId>
     <artifactId>xbatis-core</artifactId>
-    <version>1.10.6</version>
+    <version>1.10.7</version>
 </dependency>
 ```
 

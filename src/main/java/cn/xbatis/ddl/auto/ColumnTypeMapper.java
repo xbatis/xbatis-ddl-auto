@@ -62,6 +62,9 @@ class ColumnTypeMapper {
             return isOracle(dbType) ? "BINARY_FLOAT" : "REAL";
         }
         if (type == Double.class || type == double.class) {
+            if (dialect.isSqlServer(dbType)) {
+                return "FLOAT";
+            }
             return isMysql(dbType) ? "DOUBLE" : "DOUBLE PRECISION";
         }
         if (type == byte[].class || type == Byte[].class) {

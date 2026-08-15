@@ -261,6 +261,24 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void postgresqlMetadataShouldNotUseSchemaAsCatalogFallback() throws Exception {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+
+        assertFalse(creator.exposeSupportsSchemaAsCatalogFallback(productMetaData("PostgreSQL")));
+        assertFalse(creator.exposeSupportsSchemaAsCatalogFallback(productMetaData("openGauss")));
+        assertFalse(creator.exposeSupportsSchemaAsCatalogFallback(productMetaData("KingbaseES")));
+        assertFalse(creator.exposeSupportsSchemaAsCatalogFallback(productMetaData("HighGo")));
+        assertFalse(creator.exposeSupportsSchemaAsCatalogFallback(productMetaData("Microsoft SQL Server")));
+        assertTrue(creator.exposeSupportsSchemaAsCatalogFallback(productMetaData("H2")));
+
+        assertFalse(creator.exposeSupportsSchemaBatchMetadata(productMetaData("PostgreSQL")));
+        assertFalse(creator.exposeSupportsSchemaBatchMetadata(productMetaData("openGauss")));
+        assertFalse(creator.exposeSupportsSchemaBatchMetadata(productMetaData("KingbaseES")));
+        assertFalse(creator.exposeSupportsSchemaBatchMetadata(productMetaData("HighGo")));
+        assertTrue(creator.exposeSupportsSchemaBatchMetadata(productMetaData("H2")));
+    }
+
+    @Test
     void metadataUpdateSqlShouldCoverTableInfoAndEntityBridges() throws Exception {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
 
@@ -293,11 +311,30 @@ class DDLAutoCoverageTest {
 
         assertEquals(new LinkedHashSet<>(creator.tableMetadataReads).size(), creator.tableMetadataReads.size());
         assertEquals(new LinkedHashSet<>(creator.columnMetadataReads).size(), creator.columnMetadataReads.size());
+        assertEquals(new LinkedHashSet<>(creator.indexMetadataReads).size(), creator.indexMetadataReads.size());
+        assertEquals(3, creator.tableMetadataReads.size());
+        assertEquals(3, creator.columnMetadataReads.size());
+        assertEquals(3, creator.indexMetadataReads.size());
         assertTrue(creator.hasTableReadForSchema("schema_group"));
-        assertTrue(creator.hasTableReadForSchema("SCHEMA_GROUP"));
+        assertFalse(creator.hasTableReadForSchema("SCHEMA_GROUP"));
         assertTrue(creator.hasColumnReadForTable("schema_group_one"));
         assertTrue(creator.hasColumnReadForTable("schema_group_two"));
         assertTrue(creator.hasColumnReadForTable("auto_facade_user"));
+    }
+
+    @Test
+    void metadataSnapshotShouldReuseResolvedTableMetadataForPrimaryKeyReads() throws Exception {
+        SchemaCountingExecutor creator = new SchemaCountingExecutor();
+        List<TableInfo> tableInfos = creator.tableInfos(Arrays.asList(SchemaGroupOne.class, SchemaGroupTwo.class, FacadeUser.class));
+
+        try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:auto_table_schema_pk_reuse;DB_CLOSE_DELAY=-1")) {
+            creator.exposeLoadDatabaseMetadata(DbType.H2, connection, tableInfos, true, true, true);
+        }
+
+        assertEquals(3, creator.primaryKeyMetadataReads.size());
+        assertTrue(creator.hasPrimaryKeyReadForTable("schema_group_one"));
+        assertTrue(creator.hasPrimaryKeyReadForTable("schema_group_two"));
+        assertTrue(creator.hasPrimaryKeyReadForTable("auto_facade_user"));
     }
 
     @Test
@@ -313,6 +350,27 @@ class DDLAutoCoverageTest {
             assertTrue(creator.hasIndexRead(connection.getCatalog(), "PUBLIC", null));
             assertFalse(creator.hasColumnReadForTable("auto_facade_user"));
         }
+    }
+
+    @Test
+    void metadataSnapshotShouldReadTargetTablesWhenSchemaBatchIsDisabled() throws Exception {
+        SchemaCountingExecutor creator = new NoSchemaBatchCountingExecutor();
+        List<TableInfo> tableInfos = repeatedTableInfos(FacadeUser.class, 17);
+
+        try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:auto_table_schema_batch_disabled;DB_CLOSE_DELAY=-1")) {
+            creator.exposeLoadDatabaseMetadata(connection, tableInfos, true);
+
+            assertFalse(creator.hasTableRead(connection.getCatalog(), "PUBLIC", null));
+            assertFalse(creator.hasColumnRead(connection.getCatalog(), "PUBLIC", null));
+            assertFalse(creator.hasIndexRead(connection.getCatalog(), "PUBLIC", null));
+            assertTrue(creator.hasTableRead(connection.getCatalog(), "PUBLIC", "auto_facade_user"));
+            assertTrue(creator.hasColumnRead(connection.getCatalog(), "PUBLIC", "auto_facade_user"));
+            assertTrue(creator.hasIndexRead(connection.getCatalog(), "PUBLIC", "auto_facade_user"));
+        }
+
+        assertEquals(1, creator.tableMetadataReads.size());
+        assertEquals(1, creator.columnMetadataReads.size());
+        assertEquals(1, creator.indexMetadataReads.size());
     }
 
     @Test
@@ -1189,6 +1247,42 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void syncColumnTypeProbeShouldTreatMysqlBitOneAsTinyintBooleanFamily() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.MYSQL, MysqlTypeMatrix.class,
+                "enabled", "TINYINT", 3, 0, "BIT", 1, 0));
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.MYSQL, MysqlTypeMatrix.class,
+                "enabled", "BIT", 1, 0, "TINYINT", 1, 0));
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.MARIA_DB, MysqlTypeMatrix.class,
+                "enabled", "BOOLEAN", 3, 0, "TINYINT", 3, 0));
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.MARIA_DB, MysqlTypeMatrix.class,
+                "enabled", "TINYINT", 3, 0, "BOOLEAN", 3, 0));
+    }
+
+    @Test
+    void syncColumnTypeProbeShouldNotTreatOracleBinaryFloatSizeAsLengthChange() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.ORACLE, OracleTypeMatrix.class,
+                "ratio", "BINARY_FLOAT", 4, 0, "BINARY_FLOAT", 4, 0));
+    }
+
+    @Test
+    void syncColumnTypeProbeShouldNormalizeSqlServerMaxLengthMetadata() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.SQL_SERVER, SqlServerTypeMatrix.class,
+                "large_text", "nvarchar", 1073741823, 0, "nvarchar", 1073741823, 0));
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.SQL_SERVER, SqlServerTypeMatrix.class,
+                "payload", "varbinary", Integer.MAX_VALUE, 0, "varbinary", Integer.MAX_VALUE, 0));
+    }
+
+    @Test
+    void syncColumnTypeProbeShouldStillDetectSqlServerMaxToFixedLengthChanges() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertTrue(creator.exposeColumnTypeChangedWithProbe(DbType.SQL_SERVER, SqlServerTypeMatrix.class,
+                "payload", "varbinary", 8000, 0, "varbinary", Integer.MAX_VALUE, 0));
+    }
+
+    @Test
     void syncColumnTypeProbeShouldStillDetectVarcharLengthChanges() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
         assertTrue(creator.exposeColumnTypeChangedWithProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
@@ -1242,6 +1336,8 @@ class DDLAutoCoverageTest {
         assertEquals("VARCHAR2(64)", creator.exposeNormalizeColumnTypeSignature(DbType.ORACLE, "VARCHAR2(64)"));
         assertEquals("VARCHAR(64)", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "CHARACTER VARYING(64)"));
         assertEquals("BIGINT", creator.exposeNormalizeColumnTypeSignature(DbType.PGSQL, "INT8"));
+        assertEquals("BOOLEAN", creator.exposeNormalizeColumnTypeSignature(DbType.MARIA_DB, "BOOLEAN"));
+        assertEquals("BOOLEAN", creator.exposeNormalizeColumnTypeSignature(DbType.MARIA_DB, "BOOL"));
     }
 
     @Test
@@ -1563,6 +1659,7 @@ class DDLAutoCoverageTest {
         assertEquals("BIGINT", builder.exposeBigIntType(DbType.H2));
         assertEquals("SMALLINT", builder.exposeSmallIntType(DbType.H2));
         assertEquals("TINYINT", builder.exposeByteType(DbType.H2));
+        assertEquals("SMALLINT", builder.exposeByteType(DbType.DB2));
         assertEquals("BOOLEAN", builder.exposeBooleanType(DbType.H2));
         assertEquals("DECIMAL(8,3)", builder.exposeDecimalType(DbType.H2, 8, 3));
         assertEquals("BLOB", builder.exposeBlobType(DbType.H2));
@@ -1711,6 +1808,7 @@ class DDLAutoCoverageTest {
         assertTrue(sqlServerSql.contains("large_text NVARCHAR(MAX)"));
         assertTrue(sqlServerSql.contains("payload VARBINARY(MAX)"));
         assertTrue(sqlServerSql.contains("enabled BIT"));
+        assertTrue(sqlServerSql.contains("amount FLOAT"));
 
         String pgSql = builder.buildCreateTableSql(DbType.PGSQL, PostgresqlBlobUser.class);
         assertTrue(pgSql.contains("payload BYTEA"));
@@ -1750,6 +1848,15 @@ class DDLAutoCoverageTest {
             }
             if ("getCatalog".equals(method.getName())) {
                 return catalog;
+            }
+            return defaultValue(method.getReturnType());
+        });
+    }
+
+    private static DatabaseMetaData productMetaData(String productName) {
+        return proxy(DatabaseMetaData.class, (proxy, method, args) -> {
+            if ("getDatabaseProductName".equals(method.getName())) {
+                return productName;
             }
             return defaultValue(method.getReturnType());
         });
@@ -2365,6 +2472,14 @@ class DDLAutoCoverageTest {
             return executableSql(dbType, sql);
         }
 
+        boolean exposeSupportsSchemaAsCatalogFallback(DatabaseMetaData metaData) throws SQLException {
+            return supportsSchemaAsCatalogFallback(metaData);
+        }
+
+        boolean exposeSupportsSchemaBatchMetadata(DatabaseMetaData metaData) throws SQLException {
+            return supportsSchemaBatchMetadata(metaData);
+        }
+
         String exposeNormalizeDefaultValue(String defaultValue) {
             return normalizeDefaultValue(defaultValue);
         }
@@ -2617,8 +2732,16 @@ class DDLAutoCoverageTest {
 
         private final List<String> indexMetadataReads = new ArrayList<>();
 
+        private final List<String> primaryKeyMetadataReads = new ArrayList<>();
+
         void exposeLoadDatabaseMetadata(Connection connection, Collection<TableInfo> tableInfos, boolean includeColumns) throws SQLException {
             loadDatabaseMetadata(connection, tableInfos, includeColumns);
+        }
+
+        void exposeLoadDatabaseMetadata(IDbType dbType, Connection connection, Collection<TableInfo> tableInfos,
+                                        boolean includeColumns, boolean includeIndexes, boolean includePrimaryKeys) throws SQLException {
+            loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList(dbType, tableInfos),
+                    includeColumns, includeIndexes, includePrimaryKeys);
         }
 
         Set<String> exposeSchemas(Collection<TableInfo> tableInfos) {
@@ -2693,6 +2816,15 @@ class DDLAutoCoverageTest {
             return false;
         }
 
+        boolean hasPrimaryKeyReadForTable(String tableName) {
+            for (String read : primaryKeyMetadataReads) {
+                if (read.endsWith("|" + tableName)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         @Override
         protected void readTableMetadata(DatabaseMetaData metaData, String catalog, String schema, DatabaseMetadata databaseMetadata) {
             readTableMetadata(metaData, catalog, schema, null, databaseMetadata);
@@ -2701,9 +2833,9 @@ class DDLAutoCoverageTest {
         @Override
         protected void readTableMetadata(DatabaseMetaData metaData, String catalog, String schema, String tableName, DatabaseMetadata databaseMetadata) {
             tableMetadataReads.add(readKey(catalog, schema, tableName));
-            databaseMetadata.addTable(catalog, schema, "schema_group_one");
-            databaseMetadata.addTable(catalog, schema, "schema_group_two");
-            databaseMetadata.addTable(catalog, schema, "auto_facade_user");
+            addTableIfMatches(databaseMetadata, catalog, schema, tableName, "schema_group_one");
+            addTableIfMatches(databaseMetadata, catalog, schema, tableName, "schema_group_two");
+            addTableIfMatches(databaseMetadata, catalog, schema, tableName, "auto_facade_user");
         }
 
         @Override
@@ -2714,6 +2846,17 @@ class DDLAutoCoverageTest {
         @Override
         protected void readIndexMetadata(DatabaseMetaData metaData, String catalog, String schema, String tableName, DatabaseMetadata databaseMetadata) throws SQLException {
             indexMetadataReads.add(readKey(catalog, schema, tableName));
+        }
+
+        @Override
+        protected void readPrimaryKeyMetadata(DatabaseMetaData metaData, String catalog, String schema, String tableName, DatabaseMetadata databaseMetadata) {
+            primaryKeyMetadataReads.add(readKey(catalog, schema, tableName));
+        }
+
+        private void addTableIfMatches(DatabaseMetadata databaseMetadata, String catalog, String schema, String tableName, String actualTableName) {
+            if (tableName == null || matchesMetadataName(tableName, actualTableName)) {
+                databaseMetadata.addTable(catalog, schema, actualTableName);
+            }
         }
 
         private String readKey(String catalog, String schema) {
@@ -2729,6 +2872,14 @@ class DDLAutoCoverageTest {
 
         @Override
         protected boolean supportsSchemaAsCatalogFallback(DatabaseMetaData metaData) {
+            return false;
+        }
+    }
+
+    static class NoSchemaBatchCountingExecutor extends SchemaCountingExecutor {
+
+        @Override
+        protected boolean supportsSchemaBatchMetadata(DatabaseMetaData metaData) {
             return false;
         }
     }
@@ -3131,6 +3282,8 @@ class DDLAutoCoverageTest {
         private byte[] payload;
 
         private Boolean enabled;
+
+        private Double amount;
     }
 
     @Table("postgresql_blob_user")

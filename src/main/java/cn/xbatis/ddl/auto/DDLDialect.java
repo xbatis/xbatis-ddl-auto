@@ -96,7 +96,7 @@ public class DDLDialect {
         if (isOracle(dbType)) {
             return "NUMBER(3)";
         }
-        if (isPostgresql(dbType)) {
+        if (isPostgresql(dbType) || dbType == DbType.DB2) {
             return "SMALLINT";
         }
         return "TINYINT";

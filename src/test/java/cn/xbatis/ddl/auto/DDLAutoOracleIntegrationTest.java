@@ -223,6 +223,40 @@ class DDLAutoOracleIntegrationTest {
     }
 
     @Test
+    void oracleShouldCreateColumnTypeMatrix() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertColumnTypeMatrixFlow(
+                    DbType.ORACLE,
+                    connection,
+                    "short_text VARCHAR2(64)",
+                    "large_text CLOB",
+                    "int_value NUMBER(10)",
+                    "long_value NUMBER(19)",
+                    "big_number NUMBER(19)",
+                    "short_value NUMBER(5)",
+                    "byte_value NUMBER(3)",
+                    "enabled NUMBER(1)",
+                    "amount NUMBER(12,4)",
+                    "ratio BINARY_FLOAT",
+                    "score DOUBLE PRECISION",
+                    "grade VARCHAR2(1)",
+                    "payload BLOB",
+                    "biz_date DATE",
+                    "biz_time TIMESTAMP",
+                    "sql_date DATE",
+                    "sql_time TIMESTAMP",
+                    "created_at TIMESTAMP",
+                    "sql_created_at TIMESTAMP",
+                    "legacy_created_at TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE",
+                    "offset_at TIMESTAMP WITH TIME ZONE",
+                    "zoned_at TIMESTAMP WITH TIME ZONE",
+                    "request_id VARCHAR2(36)"
+            );
+        }
+    }
+
+    @Test
     void oracleShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(

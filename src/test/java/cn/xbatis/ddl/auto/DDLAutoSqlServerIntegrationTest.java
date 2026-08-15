@@ -277,6 +277,40 @@ class DDLAutoSqlServerIntegrationTest {
     }
 
     @Test
+    void sqlServerShouldCreateColumnTypeMatrix() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            DDLAutoExternalDatabaseIntegrationSupport.assertColumnTypeMatrixFlow(
+                    DbType.SQL_SERVER,
+                    connection,
+                    "short_text NVARCHAR(64)",
+                    "large_text NVARCHAR(MAX)",
+                    "int_value INTEGER",
+                    "long_value BIGINT",
+                    "big_number BIGINT",
+                    "short_value SMALLINT",
+                    "byte_value TINYINT",
+                    "enabled BIT",
+                    "amount DECIMAL(12,4)",
+                    "ratio REAL",
+                    "score FLOAT",
+                    "grade NVARCHAR(1)",
+                    "payload VARBINARY(MAX)",
+                    "biz_date DATE",
+                    "biz_time TIME",
+                    "sql_date DATE",
+                    "sql_time TIME",
+                    "created_at DATETIME2",
+                    "sql_created_at DATETIME2",
+                    "legacy_created_at DATETIME2",
+                    "event_at DATETIMEOFFSET",
+                    "offset_at DATETIMEOFFSET",
+                    "zoned_at DATETIMEOFFSET",
+                    "request_id NVARCHAR(36)"
+            );
+        }
+    }
+
+    @Test
     void sqlServerShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             DDLAutoExternalDatabaseIntegrationSupport.assertSyncDropDefaultFlow(

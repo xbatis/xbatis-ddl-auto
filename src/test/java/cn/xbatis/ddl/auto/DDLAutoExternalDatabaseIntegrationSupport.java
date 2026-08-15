@@ -6,6 +6,7 @@ import db.sql.api.DbType;
 import db.sql.api.IDbType;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.*;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -42,6 +43,8 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
     private static final String DATE_TIME_DEFAULT_TABLE = "auto_datetime_default_user";
 
     private static final String TYPE_LENGTH_DEFAULT_TABLE = "auto_type_length_default_user";
+
+    private static final String COLUMN_TYPE_MATRIX_TABLE = "auto_column_type_matrix_user";
 
     private static final String SYNC_MODIFY_TABLE = "auto_sync_modify_user";
 
@@ -623,6 +626,99 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
                     "Expected no DDL after sync type/length/default combination flow already executed: " + verifyExecutedSqlList);
         } finally {
             dropTestTable(connection, TYPE_LENGTH_DEFAULT_TABLE);
+        }
+    }
+
+    static void assertColumnTypeMatrixFlow(DatabaseCase databaseCase, String... expectedCreateSqlFragments) throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip(databaseCase)) {
+            assertColumnTypeMatrixFlow(databaseCase.dbType, connection, expectedCreateSqlFragments);
+        }
+    }
+
+    static void assertColumnTypeMatrixFlow(IDbType dbType, Connection connection, String... expectedCreateSqlFragments) throws Exception {
+        dropTestTable(connection, COLUMN_TYPE_MATRIX_TABLE);
+        try {
+            List<String> createExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, createExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .add(ColumnTypeMatrixUser.class)
+                    .execute(connection);
+
+            String createSql = String.join("\n", createExecutedSqlList);
+            for (String expectedCreateSqlFragment : expectedCreateSqlFragments) {
+                assertTrue(createSql.contains(expectedCreateSqlFragment),
+                        "Expected create SQL to contain <" + expectedCreateSqlFragment + ">, actual: " + createSql);
+            }
+
+            assertTrue(tableExists(connection, COLUMN_TYPE_MATRIX_TABLE));
+            for (String columnName : columnTypeMatrixColumnNames()) {
+                assertTrue(columnExists(connection, COLUMN_TYPE_MATRIX_TABLE, columnName),
+                        "Expected column " + columnName + " to exist in " + COLUMN_TYPE_MATRIX_TABLE);
+            }
+            assertColumnSizeIfReported(dbType, connection, COLUMN_TYPE_MATRIX_TABLE, "short_text", 64);
+            assertColumnSizeIfReported(dbType, connection, COLUMN_TYPE_MATRIX_TABLE, "grade", 1);
+            assertColumnSizeIfReported(dbType, connection, COLUMN_TYPE_MATRIX_TABLE, "request_id", 36);
+            assertColumnSizeIfReported(dbType, connection, COLUMN_TYPE_MATRIX_TABLE, "amount", 12);
+            assertDecimalDigitsIfReported(dbType, connection, COLUMN_TYPE_MATRIX_TABLE, "amount", 4);
+
+            List<String> syncExecutedSqlList = new ArrayList<>();
+            DDLTestPrinter.ddl(dbType, syncExecutedSqlList)
+                    .builder(new DefaultDDLBuilder())
+                    .mode(Mode.SYNC)
+                    .add(ColumnTypeMatrixUser.class)
+                    .execute(connection);
+            assertTrue(syncExecutedSqlList.isEmpty(),
+                    "Expected no DDL after column type matrix sync, actual: " + syncExecutedSqlList);
+        } finally {
+            dropTestTable(connection, COLUMN_TYPE_MATRIX_TABLE);
+        }
+    }
+
+    private static List<String> columnTypeMatrixColumnNames() {
+        return Arrays.asList(
+                "id",
+                "short_text",
+                "large_text",
+                "int_value",
+                "long_value",
+                "big_number",
+                "short_value",
+                "byte_value",
+                "enabled",
+                "amount",
+                "ratio",
+                "score",
+                "grade",
+                "payload",
+                "biz_date",
+                "biz_time",
+                "sql_date",
+                "sql_time",
+                "created_at",
+                "sql_created_at",
+                "legacy_created_at",
+                "event_at",
+                "offset_at",
+                "zoned_at",
+                "request_id"
+        );
+    }
+
+    private static void assertColumnSizeIfReported(IDbType dbType, Connection connection, String tableName, String columnName, int expectedSize) throws SQLException {
+        Integer actualSize = columnSize(connection, tableName, columnName);
+        assertNotNull(actualSize, "Expected JDBC metadata size for " + tableName + "." + columnName);
+        if (actualSize > 0 && dbType != DbType.SQLITE) {
+            assertEquals(Integer.valueOf(expectedSize), actualSize,
+                    "Expected JDBC metadata size for " + tableName + "." + columnName);
+        }
+    }
+
+    private static void assertDecimalDigitsIfReported(IDbType dbType, Connection connection, String tableName, String columnName, int expectedDecimalDigits) throws SQLException {
+        Integer actualDecimalDigits = columnDecimalDigits(connection, tableName, columnName);
+        assertNotNull(actualDecimalDigits, "Expected JDBC metadata decimal digits for " + tableName + "." + columnName);
+        if (actualDecimalDigits > 0 && dbType != DbType.SQLITE) {
+            assertEquals(Integer.valueOf(expectedDecimalDigits), actualDecimalDigits,
+                    "Expected JDBC metadata decimal digits for " + tableName + "." + columnName);
         }
     }
 
@@ -1873,6 +1969,65 @@ abstract class DDLAutoExternalDatabaseIntegrationSupport {
 
         @TableField
         private String remark;
+    }
+
+    @Table(COLUMN_TYPE_MATRIX_TABLE)
+    static class ColumnTypeMatrixUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String shortText;
+
+        @ColumnDefinition(length = 5000)
+        private String largeText;
+
+        private Integer intValue;
+
+        private Long longValue;
+
+        private BigInteger bigNumber;
+
+        private Short shortValue;
+
+        private Byte byteValue;
+
+        private Boolean enabled;
+
+        @ColumnDefinition(precision = 12, scale = 4)
+        private BigDecimal amount;
+
+        private Float ratio;
+
+        private Double score;
+
+        @ColumnDefinition(length = 1)
+        private Character grade;
+
+        private byte[] payload;
+
+        private LocalDate bizDate;
+
+        private LocalTime bizTime;
+
+        private java.sql.Date sqlDate;
+
+        private Time sqlTime;
+
+        private LocalDateTime createdAt;
+
+        private Timestamp sqlCreatedAt;
+
+        private java.util.Date legacyCreatedAt;
+
+        private Instant eventAt;
+
+        private java.time.OffsetDateTime offsetAt;
+
+        private java.time.ZonedDateTime zonedAt;
+
+        private UUID requestId;
     }
 
     @Table(SYNC_DROP_DEFAULT_TABLE)

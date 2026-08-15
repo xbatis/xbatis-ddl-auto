@@ -196,6 +196,40 @@ class DDLAutoGaussIntegrationTest extends DDLAutoExternalDatabaseIntegrationSupp
     }
 
     @Test
+    void gaussShouldCreateColumnTypeMatrix() throws Exception {
+        try (Connection connection = openDatabaseConnectionOrSkip()) {
+            assertColumnTypeMatrixFlow(
+                    DbType.GAUSS,
+                    connection,
+                    "short_text VARCHAR(64)",
+                    "large_text VARCHAR(5000)",
+                    "int_value INTEGER",
+                    "long_value BIGINT",
+                    "big_number BIGINT",
+                    "short_value SMALLINT",
+                    "byte_value SMALLINT",
+                    "enabled BOOLEAN",
+                    "amount DECIMAL(12,4)",
+                    "ratio REAL",
+                    "score DOUBLE PRECISION",
+                    "grade VARCHAR(1)",
+                    "payload BYTEA",
+                    "biz_date DATE",
+                    "biz_time TIME",
+                    "sql_date DATE",
+                    "sql_time TIME",
+                    "created_at TIMESTAMP",
+                    "sql_created_at TIMESTAMP",
+                    "legacy_created_at TIMESTAMP",
+                    "event_at TIMESTAMP WITH TIME ZONE",
+                    "offset_at TIMESTAMP WITH TIME ZONE",
+                    "zoned_at TIMESTAMP WITH TIME ZONE",
+                    "request_id VARCHAR(36)"
+            );
+        }
+    }
+
+    @Test
     void gaussShouldDropColumnDefaultInSyncMode() throws Exception {
         try (Connection connection = openDatabaseConnectionOrSkip()) {
             assertSyncDropDefaultFlow(
