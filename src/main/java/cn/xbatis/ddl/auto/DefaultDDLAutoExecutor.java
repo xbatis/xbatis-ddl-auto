@@ -50,6 +50,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
     private static final int SCHEMA_BATCH_METADATA_TABLE_THRESHOLD = 16;
 
+    private static final String COLUMN_TYPE_PROBE_TABLE_NAME = "xbatis_ddl_auto_type_probe";
+
+    private static final String COLUMN_TYPE_PROBE_MARKER_COLUMN_NAME = "xbatis_ddl_auto_probe_marker";
+
     private final DDLBuilder ddlBuilder;
 
     private final DDLExecutionListener executionListener;
@@ -134,6 +138,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         boolean includeIndexes = mode == Mode.SYNC || shouldReadIndexesForEntities(dbType, entityMetadataList);
         DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList,
                 includeColumns, includeIndexes, mode == Mode.SYNC);
+        prepareColumnTypeProbeIfNecessary(dbType, connection, mode, entityMetadataList, databaseMetadata);
         List<String> sqlList = new ArrayList<>();
         for (EntityDDLMetadata entityMetadata : entityMetadataList) {
             sqlList.addAll(createSqlList(dbType, mode, entityMetadata, databaseMetadata));
@@ -264,6 +269,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             boolean includeIndexes = mode == Mode.SYNC || shouldReadIndexesForEntities(dbType, entityMetadataList);
             DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, entityMetadataList,
                     includeColumns, includeIndexes, mode == Mode.SYNC);
+            prepareColumnTypeProbeIfNecessary(dbType, connection, mode, entityMetadataList, databaseMetadata);
             try (Statement statement = connection.createStatement()) {
                 for (EntityDDLMetadata entityMetadata : entityMetadataList) {
                     executeSql(dbType, statement, createSqlList(dbType, mode, entityMetadata, databaseMetadata));
@@ -375,9 +381,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         EntityDDLMetadata entityMetadata = entityMetadata(dbType, tableInfo);
         boolean includeColumns = mode == Mode.UPDATE || mode == Mode.SYNC;
         boolean includeIndexes = mode == Mode.SYNC || shouldReadIndexesForEntities(dbType, Collections.singletonList(entityMetadata));
-        return createSqlList(dbType, mode, entityMetadata,
-                loadDatabaseMetadataForEntities(dbType, connection, Collections.singletonList(entityMetadata),
-                        includeColumns, includeIndexes, mode == Mode.SYNC));
+        DatabaseMetadata databaseMetadata = loadDatabaseMetadataForEntities(dbType, connection, Collections.singletonList(entityMetadata),
+                includeColumns, includeIndexes, mode == Mode.SYNC);
+        prepareColumnTypeProbeIfNecessary(dbType, connection, mode, Collections.singletonList(entityMetadata), databaseMetadata);
+        return createSqlList(dbType, mode, entityMetadata, databaseMetadata);
     }
 
     /**
@@ -585,6 +592,214 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             }
         }
         return false;
+    }
+
+    /**
+     * SYNC 模式下创建固定探测表，使用当前数据库 JDBC 元数据口径判断类型族。
+     */
+    protected void prepareColumnTypeProbeIfNecessary(IDbType dbType,
+                                                     Connection connection,
+                                                     Mode mode,
+                                                     Collection<EntityDDLMetadata> entityMetadataList,
+                                                     DatabaseMetadata databaseMetadata) throws SQLException {
+        if (mode != Mode.SYNC || !shouldProbeColumnTypes(dbType, entityMetadataList)) {
+            return;
+        }
+        databaseMetadata.setColumnTypeProbeResult(probeColumnTypes(dbType, connection, entityMetadataList));
+    }
+
+    /**
+     * 只有需要比较列类型的数据库才创建探测表。
+     */
+    protected boolean shouldProbeColumnTypes(IDbType dbType, Collection<EntityDDLMetadata> entityMetadataList) {
+        if (!dialect.supportsModifyColumn(dbType)) {
+            return false;
+        }
+        for (EntityDDLMetadata entityMetadata : entityMetadataList) {
+            if (!entityMetadata.getColumns().isEmpty() && !resolveTableNames(entityMetadata.getTableInfo()).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 创建固定探测表，读取当前数据库对实体列类型族的真实元数据返回值，并在 finally 中清理探测表。
+     */
+    protected ColumnTypeProbeResult probeColumnTypes(IDbType dbType,
+                                                     Connection connection,
+                                                     Collection<EntityDDLMetadata> entityMetadataList) throws SQLException {
+        Map<String, ColumnTypeProbeSpec> probeSpecs = columnTypeProbeSpecs(dbType, entityMetadataList);
+        if (probeSpecs.isEmpty()) {
+            return new ColumnTypeProbeResult(Collections.<String, ColumnMetadata>emptyMap());
+        }
+        String catalog = connection.getCatalog();
+        String schema = getSchema(connection);
+        SQLException failure = null;
+        try (Statement statement = connection.createStatement()) {
+            dropColumnTypeProbeTableIfExists(dbType, connection, statement, catalog, schema);
+            statement.execute(executableSql(dbType, buildCreateColumnTypeProbeTableSql(dbType, probeSpecs.values())));
+            ColumnTypeProbeResult probeResult = readColumnTypeProbeResult(connection, catalog, schema, probeSpecs);
+            return probeResult;
+        } catch (SQLException exception) {
+            failure = exception;
+            throw exception;
+        } finally {
+            try (Statement statement = connection.createStatement()) {
+                dropColumnTypeProbeTableIfExists(dbType, connection, statement, catalog, schema);
+            } catch (SQLException exception) {
+                if (failure != null) {
+                    failure.addSuppressed(exception);
+                } else {
+                    throw exception;
+                }
+            }
+        }
+    }
+
+    /**
+     * 收集本轮实体涉及的类型族；同一类型族只探测一次，长度和精度仍由业务字段自身比较。
+     */
+    protected Map<String, ColumnTypeProbeSpec> columnTypeProbeSpecs(IDbType dbType, Collection<EntityDDLMetadata> entityMetadataList) {
+        Map<String, ColumnTypeProbeSpec> probeSpecs = new LinkedHashMap<>();
+        for (EntityDDLMetadata entityMetadata : entityMetadataList) {
+            for (ColumnInfo column : entityMetadata.getColumns()) {
+                ColumnTypeProbeSpec probeSpec = columnTypeProbeSpec(dbType, column);
+                if (!probeSpecs.containsKey(probeSpec.typeFamilyKey)) {
+                    probeSpecs.put(probeSpec.typeFamilyKey, probeSpec);
+                }
+            }
+        }
+        return probeSpecs;
+    }
+
+    /**
+     * 将实体列转换为探测表列定义。
+     */
+    protected ColumnTypeProbeSpec columnTypeProbeSpec(IDbType dbType, ColumnInfo column) {
+        String typeSql = buildExpectedColumnTypeSignature(dbType, column, false);
+        String typeFamilyKey = columnTypeFamilyKey(dbType, typeSql);
+        return new ColumnTypeProbeSpec(typeFamilyKey, columnTypeProbeColumnName(typeFamilyKey), typeSql);
+    }
+
+    /**
+     * 固定探测表中的列名，保持短且确定，避免 Oracle 等数据库标识符长度限制。
+     */
+    protected String columnTypeProbeColumnName(String typeFamilyKey) {
+        String normalized = typeFamilyKey.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_");
+        normalized = normalized.replaceAll("^_+", "").replaceAll("_+$", "");
+        if (normalized.isEmpty()) {
+            normalized = "type";
+        }
+        String columnName = "c_" + normalized;
+        if (columnName.length() <= 30) {
+            return columnName;
+        }
+        return columnName.substring(0, 22) + "_" + Integer.toHexString(typeFamilyKey.hashCode());
+    }
+
+    /**
+     * 创建探测表 SQL。探测表使用固定名称，列只表达类型族，不表达业务约束。
+     */
+    protected String buildCreateColumnTypeProbeTableSql(IDbType dbType, Collection<ColumnTypeProbeSpec> probeSpecs) {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("CREATE TABLE ");
+        appendColumnTypeProbeTableName(ddl, dbType);
+        ddl.append(" (");
+        ddl.append(dbType.wrap(COLUMN_TYPE_PROBE_MARKER_COLUMN_NAME)).append(" INTEGER");
+        for (ColumnTypeProbeSpec probeSpec : probeSpecs) {
+            ddl.append(", ");
+            ddl.append(dbType.wrap(probeSpec.columnName)).append(" ").append(probeSpec.typeSql);
+        }
+        ddl.append(")");
+        return ddl.toString();
+    }
+
+    /**
+     * 删除固定探测表 SQL。
+     */
+    protected String buildDropColumnTypeProbeTableSql(IDbType dbType) {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("DROP TABLE ");
+        appendColumnTypeProbeTableName(ddl, dbType);
+        return ddl.toString();
+    }
+
+    protected void appendColumnTypeProbeTableName(StringBuilder ddl, IDbType dbType) {
+        ddl.append(dbType.wrap(COLUMN_TYPE_PROBE_TABLE_NAME));
+    }
+
+    /**
+     * 通过 JDBC 元数据确认固定探测表存在后再删除，避免 DROP TABLE IF EXISTS 方言差异。
+     */
+    protected void dropColumnTypeProbeTableIfExists(IDbType dbType,
+                                                    Connection connection,
+                                                    Statement statement,
+                                                    String catalog,
+                                                    String schema) throws SQLException {
+        if (columnTypeProbeTableExists(connection, catalog, schema)) {
+            statement.execute(executableSql(dbType, buildDropColumnTypeProbeTableSql(dbType)));
+        }
+    }
+
+    protected boolean columnTypeProbeTableExists(Connection connection, String catalog, String schema) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        Set<String> schemaCandidates = candidates(schema);
+        if (schema == null) {
+            schemaCandidates.add(null);
+        }
+        Set<String> tableCandidates = candidates(COLUMN_TYPE_PROBE_TABLE_NAME);
+        boolean schemaAsCatalogFallback = supportsSchemaAsCatalogFallback(metaData);
+        for (String schemaCandidate : schemaCandidates) {
+            for (String tableName : tableCandidates) {
+                if (tableExists(metaData, catalog, schemaCandidate, tableName, TABLE_TYPES)) {
+                    return true;
+                }
+                if (schemaCandidate != null && schemaAsCatalogFallback
+                        && tableExists(metaData, schemaCandidate, null, tableName, TABLE_TYPES)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 读取探测表列元数据。所有探测列都必须被当前 JDBC 驱动返回。
+     */
+    protected ColumnTypeProbeResult readColumnTypeProbeResult(Connection connection,
+                                                             String catalog,
+                                                             String schema,
+                                                             Map<String, ColumnTypeProbeSpec> probeSpecs) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        DatabaseMetadata probeMetadata = new DatabaseMetadata(catalog, schema);
+        Set<String> readKeys = new LinkedHashSet<>();
+        boolean schemaAsCatalogFallback = supportsSchemaAsCatalogFallback(metaData);
+        Set<String> schemaCandidates = candidates(schema);
+        if (schema == null) {
+            schemaCandidates.add(null);
+        }
+        Set<String> tableCandidates = candidates(COLUMN_TYPE_PROBE_TABLE_NAME);
+        for (String schemaCandidate : schemaCandidates) {
+            for (String tableName : tableCandidates) {
+                readColumnMetadataIfNecessary(metaData, catalog, schemaCandidate, tableName, probeMetadata, readKeys);
+                if (schemaCandidate != null && schemaAsCatalogFallback) {
+                    readColumnMetadataIfNecessary(metaData, schemaCandidate, null, tableName, probeMetadata, readKeys);
+                }
+            }
+        }
+
+        Map<String, ColumnMetadata> columnMetadataByTypeFamily = new LinkedHashMap<>();
+        for (ColumnTypeProbeSpec probeSpec : probeSpecs.values()) {
+            ColumnMetadata columnMetadata = probeMetadata.getColumnMetadata(catalog, schema,
+                    COLUMN_TYPE_PROBE_TABLE_NAME, probeSpec.columnName);
+            if (columnMetadata == null) {
+                throw new SQLException("Failed to read DDL type probe column metadata: "
+                        + COLUMN_TYPE_PROBE_TABLE_NAME + "." + probeSpec.columnName);
+            }
+            columnMetadataByTypeFamily.put(probeSpec.typeFamilyKey, columnMetadata);
+        }
+        return new ColumnTypeProbeResult(columnMetadataByTypeFamily);
     }
 
     /**
@@ -1665,11 +1880,10 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             if (columnMetadata == null) {
                 continue;
             }
-            boolean typeChanged = columnTypeChanged(dbType, column, columnMetadata);
+            boolean typeChanged = columnTypeChanged(dbType, column, columnMetadata, databaseMetadata);
             boolean defaultChanged = columnDefaultChanged(column, columnMetadata);
             boolean commentChanged = columnCommentChanged(column, columnMetadata);
             boolean autoIncrementChanged = columnAutoIncrementChanged(column, columnMetadata, idColumnCount);
-            System.out.println(column.getName() + "===> typeChanged:" + typeChanged + "===> defaultChanged:" + defaultChanged + "===> commentChanged:" + commentChanged + "===> autoIncrementChanged:" + autoIncrementChanged);
             if (autoIncrementChanged && !dialect.supportsModifyAutoIncrement(dbType)) {
                 throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
             }
@@ -1772,26 +1986,42 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     /**
      * 判断列的类型定义是否发生变化。
      */
-    protected boolean columnTypeChanged(IDbType dbType, ColumnInfo column, ColumnMetadata columnMetadata) {
-        String expectedType = normalizeColumnTypeSignature(dbType, buildExpectedColumnTypeSignature(dbType, column));
-        String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
-        boolean changed = !expectedType.equals(actualType);
-        if (!changed) {
-            return false;
+    protected boolean columnTypeChanged(IDbType dbType, ColumnInfo column, ColumnMetadata columnMetadata, DatabaseMetadata databaseMetadata) {
+        ColumnTypeProbeResult probeResult = databaseMetadata == null ? null : databaseMetadata.getColumnTypeProbeResult();
+        if (probeResult == null) {
+            throw new IllegalStateException("SYNC column type comparison requires column type probe metadata");
         }
-        if (expectedType.equals("TINYINT(1)")) {
-            changed = !actualType.equals("BIT") && !actualType.equals("BOOLEAN") && !actualType.equals("BOOL") && !actualType.equals("BOOLEANEAN");
-        } else if (expectedType.equals("TIMESTAMP WITH TIME ZONE") && actualType.equals("DATETIME WITH TIME ZONE")) {
-            changed = false;
-        } else if ((expectedType.contains("TIMESTAMP") || expectedType.contains("DATETIME")) && (actualType.contains("TIMESTAMP") || actualType.contains("DATETIME"))) {
-            changed = false;
-        } else if ((expectedType.contains("DATE")) && (actualType.contains("DATE"))) {
-            changed = false;
-        } else if ((expectedType.contains("NVARCHAR(MAX)")) && (actualType.startsWith("NVARCHAR"))) {
-            changed = false;
+        String expectedTypeSignature = buildExpectedColumnTypeSignature(dbType, column);
+        String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, expectedTypeSignature);
+        ColumnMetadata probeColumnMetadata = probeResult.getColumnMetadata(expectedTypeFamilyKey);
+        if (probeColumnMetadata == null) {
+            throw new IllegalStateException("Missing SYNC column type probe metadata for type family: " + expectedTypeFamilyKey);
         }
+        String expectedActualTypeFamilyKey = columnTypeFamilyKey(dbType, probeColumnMetadata);
+        String actualTypeFamilyKey = columnTypeFamilyKey(dbType, columnMetadata);
+        if (!expectedActualTypeFamilyKey.equals(actualTypeFamilyKey)) {
+            return true;
+        }
+        return columnTypeParametersChanged(dbType, expectedTypeSignature, columnMetadata);
+    }
 
-        return changed;
+    /**
+     * 判断列的长度、精度或小数位是否发生变化。类型族本身由探测表结果判断。
+     */
+    protected boolean columnTypeParametersChanged(IDbType dbType, String expectedTypeSignature, ColumnMetadata columnMetadata) {
+        String expectedType = normalizeColumnTypeSignature(dbType, expectedTypeSignature);
+        String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
+        String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, expectedType);
+        if (isPrecisionScaleType(expectedTypeFamilyKey)) {
+            return !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
+        }
+        if (isLengthType(expectedTypeFamilyKey)) {
+            if (expectedType.contains("NVARCHAR(MAX)") && actualType.startsWith("NVARCHAR")) {
+                return false;
+            }
+            return !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
+        }
+        return false;
     }
 
     /**
@@ -1863,7 +2093,6 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         }
         String expectedDefault = normalizeDefaultValue(column.getDefinition().defaultValue());
         String actualDefault = normalizeDefaultValue(columnMetadata.getColumnDefault());
-        System.out.println(column.getName() + " ==> " + expectedDefault + ":" + actualDefault);
         if (expectedDefault.equals(actualDefault)) {
             return false;
         }
@@ -2020,6 +2249,13 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      * 生成实体列对应的预期类型签名。
      */
     protected String buildExpectedColumnTypeSignature(IDbType dbType, ColumnInfo column) {
+        return buildExpectedColumnTypeSignature(dbType, column, true);
+    }
+
+    /**
+     * 生成实体列对应的预期类型签名。
+     */
+    protected String buildExpectedColumnTypeSignature(IDbType dbType, ColumnInfo column, boolean includeAutoIncrement) {
         ColumnDefinition columnDefinition = column.getDefinition();
         if (!isBlank(columnDefinition.definition())) {
             return buildColumnDefinitionType(columnDefinition);
@@ -2032,7 +2268,7 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             }
             return columnTypeMapper.getStringType(dbType, columnDefinition.length() > 0 ? columnDefinition.length() : 64);
         }
-        boolean autoIncrement = column.isId() && column.getIdAutoType() == IdAutoType.AUTO;
+        boolean autoIncrement = includeAutoIncrement && column.isId() && column.getIdAutoType() == IdAutoType.AUTO;
         return columnTypeMapper.getColumnType(dbType, type, columnDefinition, autoIncrement);
     }
 
@@ -2206,6 +2442,54 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             normalized = "TIMESTAMP WITH TIME ZONE" + normalized.substring("TIMESTAMPTZ".length());
         }
         return normalized;
+    }
+
+    /**
+     * 将列类型签名折叠为只表达类型族的 key，长度、精度和小数位由独立逻辑继续比较。
+     */
+    protected String columnTypeFamilyKey(IDbType dbType, ColumnMetadata columnMetadata) {
+        return columnTypeFamilyKey(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
+    }
+
+    /**
+     * 将列类型签名折叠为只表达类型族的 key。
+     */
+    protected String columnTypeFamilyKey(IDbType dbType, String typeSignature) {
+        String normalized = normalizeColumnTypeSignature(dbType, typeSignature);
+        if (normalized.isEmpty()) {
+            return "";
+        }
+        return stripColumnTypeParameters(normalized).trim();
+    }
+
+    protected String stripColumnTypeParameters(String typeSignature) {
+        if (isBlank(typeSignature)) {
+            return "";
+        }
+        int parameterStart = typeSignature.indexOf('(');
+        if (parameterStart < 0) {
+            return typeSignature;
+        }
+        int parameterEnd = typeSignature.indexOf(')', parameterStart);
+        if (parameterEnd < 0) {
+            return typeSignature.substring(0, parameterStart);
+        }
+        return typeSignature.substring(0, parameterStart) + typeSignature.substring(parameterEnd + 1);
+    }
+
+    protected String columnTypeParameters(String typeSignature) {
+        if (isBlank(typeSignature)) {
+            return "";
+        }
+        int parameterStart = typeSignature.indexOf('(');
+        if (parameterStart < 0) {
+            return "";
+        }
+        int parameterEnd = typeSignature.indexOf(')', parameterStart);
+        if (parameterEnd < 0) {
+            return typeSignature.substring(parameterStart);
+        }
+        return typeSignature.substring(parameterStart, parameterEnd + 1);
     }
 
     /**
@@ -2774,6 +3058,40 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
     }
 
     /**
+     * 探测表中的单列定义。
+     */
+    protected static class ColumnTypeProbeSpec {
+
+        private final String typeFamilyKey;
+
+        private final String columnName;
+
+        private final String typeSql;
+
+        ColumnTypeProbeSpec(String typeFamilyKey, String columnName, String typeSql) {
+            this.typeFamilyKey = typeFamilyKey;
+            this.columnName = columnName;
+            this.typeSql = typeSql;
+        }
+    }
+
+    /**
+     * 当前数据库对实体类型族的实际 JDBC 元数据口径。
+     */
+    protected static class ColumnTypeProbeResult {
+
+        private final Map<String, ColumnMetadata> columnMetadataByTypeFamily;
+
+        ColumnTypeProbeResult(Map<String, ColumnMetadata> columnMetadataByTypeFamily) {
+            this.columnMetadataByTypeFamily = new LinkedHashMap<>(columnMetadataByTypeFamily);
+        }
+
+        ColumnMetadata getColumnMetadata(String typeFamilyKey) {
+            return columnMetadataByTypeFamily.get(typeFamilyKey);
+        }
+    }
+
+    /**
      * 列元数据行。
      */
     protected static class ColumnMetadata {
@@ -2900,6 +3218,8 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
 
         private final Map<String, List<SequenceMetadata>> sequencesByName = new LinkedHashMap<>();
 
+        private ColumnTypeProbeResult columnTypeProbeResult;
+
         DatabaseMetadata(String catalog) {
             this(catalog, null);
         }
@@ -3010,6 +3330,14 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             put(sequencesByName, metadataLookupKey(sequenceName), new SequenceMetadata(catalog, schema, sequenceName));
         }
 
+        void setColumnTypeProbeResult(ColumnTypeProbeResult columnTypeProbeResult) {
+            this.columnTypeProbeResult = columnTypeProbeResult;
+        }
+
+        ColumnTypeProbeResult getColumnTypeProbeResult() {
+            return columnTypeProbeResult;
+        }
+
         int objectType(TableInfo tableInfo) {
             return objectType(tableInfo, tableInfo.getTableName());
         }
@@ -3066,6 +3394,34 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
                 if (matches(tableInfo, tableName, column.catalog, column.schema, column.tableName)
                         && metadataNameMatcher.matchesMetadataName(columnName, column.columnName)) {
                     return column;
+                }
+            }
+            return null;
+        }
+
+        ColumnMetadata getColumnMetadata(String expectedCatalog, String expectedSchema, String expectedTableName, String columnName) {
+            List<ColumnMetadata> columns = columnsByTableName.get(metadataLookupKey(expectedTableName));
+            if (columns == null) {
+                return null;
+            }
+            Set<String> schemaCandidates = candidates(expectedSchema);
+            if (expectedSchema == null) {
+                schemaCandidates.add(null);
+            }
+            Set<String> tableCandidates = candidates(expectedTableName);
+            for (ColumnMetadata column : columns) {
+                if (!metadataNameMatcher.matchesMetadataName(columnName, column.columnName)) {
+                    continue;
+                }
+                for (String schema : schemaCandidates) {
+                    for (String tableCandidate : tableCandidates) {
+                        if (matchesMetadataRow(expectedCatalog, schema, tableCandidate, column.catalog, column.schema, column.tableName)) {
+                            return column;
+                        }
+                        if (schema != null && matchesMetadataRow(schema, null, tableCandidate, column.catalog, column.schema, column.tableName)) {
+                            return column;
+                        }
+                    }
                 }
             }
             return null;

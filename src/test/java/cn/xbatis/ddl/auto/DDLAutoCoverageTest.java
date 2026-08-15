@@ -1182,6 +1182,43 @@ class DDLAutoCoverageTest {
     }
 
     @Test
+    void syncColumnTypeProbeShouldTreatPostgresqlInt4AsIntegerFamily() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertFalse(creator.exposeColumnTypeChangedWithProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "age", "int4", 10, 0, "int4", 10, 0));
+    }
+
+    @Test
+    void syncColumnTypeProbeShouldStillDetectVarcharLengthChanges() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertTrue(creator.exposeColumnTypeChangedWithProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "username", "varchar", 14, 0, "varchar", 64, 0));
+    }
+
+    @Test
+    void syncColumnTypeProbeShouldStillDetectDecimalPrecisionAndScaleChanges() {
+        ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
+        assertTrue(creator.exposeColumnTypeChangedWithProbe(DbType.PGSQL, PostgresqlTypeProbeUser.class,
+                "amount", "numeric", 18, 6, "numeric", 12, 3));
+    }
+
+    @Test
+    void syncSqlListShouldCreateAndDropFixedColumnTypeProbeTable() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:auto_table_type_probe;DB_CLOSE_DELAY=-1");
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE type_probe_cleanup_user (id BIGINT, username VARCHAR(64))");
+
+            List<String> sqlList = DDLTestPrinter.ddl(DbType.H2)
+                    .mode(Mode.SYNC)
+                    .add(TypeProbeCleanupUser.class)
+                    .sqlList(connection);
+
+            assertTrue(sqlList.isEmpty(), "same entity/database definition should not generate DDL: " + sqlList);
+            assertFalse(tableExists(connection, "xbatis_ddl_auto_type_probe"));
+        }
+    }
+
+    @Test
     void columnTypeSignatureShouldNormalizeTimestampPrecisionVariants() {
         ExposedMetadataExecutor creator = new ExposedMetadataExecutor();
 
@@ -2041,7 +2078,7 @@ class DDLAutoCoverageTest {
                     DatabaseMetaData.columnNoNulls, null, null, null, null);
             databaseMetadata.addColumn("catalog", null, tableName, "username", Types.VARCHAR, typeName, 64, 0,
                     DatabaseMetaData.columnNoNulls, null, null, null, existingComment);
-            return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+            return createModifyColumnSqlListWithProbe(dbType, tableInfo, tableName, databaseMetadata);
         }
 
         List<String> exposeAutoIncrementModifySqlList(IDbType dbType, Class<?> entityClass, String tableName, String existingAutoIncrement) {
@@ -2051,7 +2088,7 @@ class DDLAutoCoverageTest {
             databaseMetadata.addPrimaryKey("catalog", null, tableName, "PRIMARY", "id");
             databaseMetadata.addColumn("catalog", null, tableName, "id", Types.BIGINT, "BIGINT", 0, 0,
                     DatabaseMetaData.columnNoNulls, null, existingAutoIncrement, null, null);
-            return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+            return createModifyColumnSqlListWithProbe(dbType, tableInfo, tableName, databaseMetadata);
         }
 
         List<String> exposeSyncModifyDefaultOracleSqlList() {
@@ -2067,7 +2104,7 @@ class DDLAutoCoverageTest {
             // create_time 为 V1 状态（无默认值），同步后应生成 DEFAULT CURRENT_TIMESTAMP
             databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "create_time", Types.TIMESTAMP, "TIMESTAMP(6)", 6, 0,
                     DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.ORACLE, entityMetadata(DbType.ORACLE, tableInfo), "auto_sync_modify_default_user", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.ORACLE, tableInfo, "auto_sync_modify_default_user", databaseMetadata);
         }
 
         List<String> exposeSyncModifyDefaultOracleTimestampWithTimeZoneSqlList() {
@@ -2080,7 +2117,7 @@ class DDLAutoCoverageTest {
             // Oracle JDBC 对 TIMESTAMP WITH TIME ZONE 列返回 TIMESTAMP(6) WITH TIME ZONE，不应被判定为类型变更
             databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_tz_user", "event_at", Types.TIMESTAMP_WITH_TIMEZONE,
                     "TIMESTAMP(6) WITH TIME ZONE", 6, 0, DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.ORACLE, entityMetadata(DbType.ORACLE, tableInfo), "auto_sync_modify_default_tz_user", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.ORACLE, tableInfo, "auto_sync_modify_default_tz_user", databaseMetadata);
         }
 
         List<String> exposeSyncModifyDefaultPostgresqlTimestamptzSqlList() {
@@ -2093,7 +2130,7 @@ class DDLAutoCoverageTest {
             // Kingbase/PostgreSQL JDBC 对 timestamptz 列返回 TIMESTAMPTZ，不应被判定为类型变更
             databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_tz_user", "event_at", Types.TIMESTAMP_WITH_TIMEZONE,
                     "TIMESTAMPTZ", 35, 6, DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.PGSQL, entityMetadata(DbType.PGSQL, tableInfo), "auto_sync_modify_default_tz_user", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.PGSQL, tableInfo, "auto_sync_modify_default_tz_user", databaseMetadata);
         }
 
         List<String> exposeSyncModifyDefaultPostgresqlTimestampWithoutTimeZoneSqlList() {
@@ -2108,7 +2145,7 @@ class DDLAutoCoverageTest {
             // 部分驱动对 TIMESTAMP 列返回 timestamp(6) without time zone，不应被判定为类型变更
             databaseMetadata.addColumn("catalog", null, "auto_sync_modify_default_user", "create_time", Types.TIMESTAMP,
                     "TIMESTAMP(6) WITHOUT TIME ZONE", 6, 0, DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.PGSQL, entityMetadata(DbType.PGSQL, tableInfo), "auto_sync_modify_default_user", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.PGSQL, tableInfo, "auto_sync_modify_default_user", databaseMetadata);
         }
 
         List<String> exposeSyncIdempotentAfterGaussDefaultsSqlList() {
@@ -2140,7 +2177,7 @@ class DDLAutoCoverageTest {
                     DatabaseMetaData.columnNullable, "TEXT_TIMESTAMPTZ('NOW'::TEXT)", null, null, null);
             databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "remark", Types.VARCHAR, "VARCHAR", 255, 0,
                     DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.GAUSS, entityMetadata(DbType.GAUSS, tableInfo), "type_length_default_matrix", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.GAUSS, tableInfo, "type_length_default_matrix", databaseMetadata);
         }
 
         List<String> exposeSyncIdempotentAfterGaussDefaultsCastVariantsSqlList() {
@@ -2171,7 +2208,7 @@ class DDLAutoCoverageTest {
                     DatabaseMetaData.columnNullable, "pg_systimestamp()", null, null, null);
             databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "remark", Types.VARCHAR, "VARCHAR", 255, 0,
                     DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.GAUSS, entityMetadata(DbType.GAUSS, tableInfo), "type_length_default_matrix", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.GAUSS, tableInfo, "type_length_default_matrix", databaseMetadata);
         }
 
         List<String> exposeSyncIdempotentAfterNowTimestampStoredAsDateDefaultsSqlList() {
@@ -2202,11 +2239,34 @@ class DDLAutoCoverageTest {
                     DatabaseMetaData.columnNullable, "now()", null, null, null);
             databaseMetadata.addColumn("catalog", null, "type_length_default_matrix", "remark", Types.VARCHAR, "VARCHAR", 255, 0,
                     DatabaseMetaData.columnNullable, null, null, null, null);
-            return createModifyColumnSqlList(DbType.GAUSS, entityMetadata(DbType.GAUSS, tableInfo), "type_length_default_matrix", databaseMetadata);
+            return createModifyColumnSqlListWithProbe(DbType.GAUSS, tableInfo, "type_length_default_matrix", databaseMetadata);
         }
 
         String exposeNormalizeColumnTypeSignature(IDbType dbType, String typeSignature) {
             return normalizeColumnTypeSignature(dbType, typeSignature);
+        }
+
+        boolean exposeColumnTypeChangedWithProbe(IDbType dbType,
+                                                 Class<?> entityClass,
+                                                 String columnName,
+                                                 String actualTypeName,
+                                                 int actualSize,
+                                                 int actualScale,
+                                                 String probeTypeName,
+                                                 int probeSize,
+                                                 int probeScale) {
+            ColumnInfo column = column(dbType, entityClass, columnName);
+            String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, buildExpectedColumnTypeSignature(dbType, column));
+            Map<String, ColumnMetadata> probeColumns = new LinkedHashMap<>();
+            probeColumns.put(expectedTypeFamilyKey, new ColumnMetadata("catalog", null, "xbatis_ddl_auto_type_probe",
+                    "probe_column", Types.OTHER, probeTypeName, probeSize, probeScale,
+                    DatabaseMetaData.columnNullable, null, null, null, null));
+            DatabaseMetadata databaseMetadata = new DatabaseMetadata("catalog");
+            databaseMetadata.setColumnTypeProbeResult(new ColumnTypeProbeResult(probeColumns));
+            ColumnMetadata actualColumnMetadata = new ColumnMetadata("catalog", null, "type_probe_user",
+                    columnName, Types.OTHER, actualTypeName, actualSize, actualScale,
+                    DatabaseMetaData.columnNullable, null, null, null, null);
+            return columnTypeChanged(dbType, column, actualColumnMetadata, databaseMetadata);
         }
 
         List<String> exposeDerivedMetadataModifySqlList(IDbType dbType, Class<?> entityClass, String tableName, boolean defaultsMatch) {
@@ -2226,7 +2286,29 @@ class DDLAutoCoverageTest {
                         Integer.parseInt(parsed[1]), Integer.parseInt(parsed[2]), DatabaseMetaData.columnNullable,
                         columnDefault, null, null, null);
             }
-            return createModifyColumnSqlList(dbType, entityMetadata(dbType, tableInfo), tableName, databaseMetadata);
+            return createModifyColumnSqlListWithProbe(dbType, tableInfo, tableName, databaseMetadata);
+        }
+
+        private List<String> createModifyColumnSqlListWithProbe(IDbType dbType, TableInfo tableInfo, String tableName, DatabaseMetadata databaseMetadata) {
+            EntityDDLMetadata entityMetadata = entityMetadata(dbType, tableInfo);
+            seedColumnTypeProbeResult(dbType, entityMetadata, databaseMetadata);
+            return createModifyColumnSqlList(dbType, entityMetadata, tableName, databaseMetadata);
+        }
+
+        private void seedColumnTypeProbeResult(IDbType dbType, EntityDDLMetadata entityMetadata, DatabaseMetadata databaseMetadata) {
+            Map<String, ColumnMetadata> probeColumns = new LinkedHashMap<>();
+            for (ColumnInfo column : entityMetadata.getColumns()) {
+                String typeSignature = buildExpectedColumnTypeSignature(dbType, column, false);
+                String typeFamilyKey = columnTypeFamilyKey(dbType, typeSignature);
+                if (probeColumns.containsKey(typeFamilyKey)) {
+                    continue;
+                }
+                String[] parsed = parseTypeSignature(typeSignature);
+                probeColumns.put(typeFamilyKey, new ColumnMetadata("catalog", null, "xbatis_ddl_auto_type_probe",
+                        "probe_" + probeColumns.size(), Types.OTHER, parsed[0], Integer.parseInt(parsed[1]),
+                        Integer.parseInt(parsed[2]), DatabaseMetaData.columnNullable, null, null, null, null));
+            }
+            databaseMetadata.setColumnTypeProbeResult(new ColumnTypeProbeResult(probeColumns));
         }
 
         private static String[] parseTypeSignature(String typeSignature) {
@@ -2942,6 +3024,31 @@ class DDLAutoCoverageTest {
 
         @TableField
         private String remark;
+    }
+
+    @Table("type_probe_user")
+    static class PostgresqlTypeProbeUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
+
+        private Integer age;
+
+        @ColumnDefinition(precision = 12, scale = 3)
+        private BigDecimal amount;
+    }
+
+    @Table("type_probe_cleanup_user")
+    static class TypeProbeCleanupUser {
+
+        @TableId(value = IdAutoType.NONE)
+        private Long id;
+
+        @ColumnDefinition(length = 64)
+        private String username;
     }
 
     @Table("composite_primary_key_user")
