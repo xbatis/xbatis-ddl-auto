@@ -1984,15 +1984,18 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
             if (columnMetadata == null) {
                 continue;
             }
-            boolean typeChanged = columnTypeChanged(dbType, column, columnMetadata, databaseMetadata);
+            boolean definitionChanged = columnTypeChanged(dbType, column, columnMetadata, databaseMetadata);
             boolean defaultChanged = columnDefaultChanged(column, columnMetadata);
             boolean commentChanged = columnCommentChanged(column, columnMetadata);
-            boolean autoIncrementChanged = columnAutoIncrementChanged(column, columnMetadata, idColumnCount);
-            if (autoIncrementChanged && !dialect.supportsModifyAutoIncrement(dbType)) {
-                throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
+            boolean autoIncrementChanged = false;
+            if (!definitionChanged) {
+                autoIncrementChanged = columnAutoIncrementChanged(column, columnMetadata, idColumnCount);
+                if (autoIncrementChanged && !dialect.supportsModifyAutoIncrement(dbType)) {
+                    throw new UnsupportedOperationException(dbType.getName() + " does not support MODIFY AUTO_INCREMENT");
+                }
             }
             boolean inlineAutoIncrementChanged = autoIncrementChanged && dialect.supportsInlineModifyAutoIncrement(dbType);
-            if (typeChanged || inlineAutoIncrementChanged || (dialect.isMysql(dbType) && commentChanged)) {
+            if (definitionChanged || inlineAutoIncrementChanged || (dialect.isMysql(dbType) && commentChanged)) {
                 modifiedColumns.add(column);
             }
             if (defaultChanged) {
@@ -2091,22 +2094,35 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
      * 判断列的类型定义是否发生变化。
      */
     protected boolean columnTypeChanged(IDbType dbType, ColumnInfo column, ColumnMetadata columnMetadata, DatabaseMetadata databaseMetadata) {
+        String expectedTypeSignature = buildExpectedColumnTypeSignature(dbType, column);
+        String expectedType = normalizeColumnTypeSignature(dbType, expectedTypeSignature);
+        String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
+        String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, expectedType);
+        if (columnLengthChanged(expectedTypeFamilyKey, expectedType, actualType)) {
+            return true;
+        }
+        if (columnPrecisionChanged(expectedTypeFamilyKey, expectedType, actualType)) {
+            return true;
+        }
+        return columnTypeFamilyChanged(dbType, expectedTypeFamilyKey, columnMetadata, databaseMetadata);
+    }
+
+    protected boolean columnTypeFamilyChanged(IDbType dbType,
+                                              String expectedTypeFamilyKey,
+                                              ColumnMetadata columnMetadata,
+                                              DatabaseMetadata databaseMetadata) {
         ColumnTypeProbeResult probeResult = databaseMetadata == null ? null : databaseMetadata.getColumnTypeProbeResult();
         if (probeResult == null) {
             throw new IllegalStateException("SYNC column type comparison requires column type probe metadata");
         }
-        String expectedTypeSignature = buildExpectedColumnTypeSignature(dbType, column);
-        String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, expectedTypeSignature);
         ColumnMetadata probeColumnMetadata = probeResult.getColumnMetadata(expectedTypeFamilyKey);
         if (probeColumnMetadata == null) {
             throw new IllegalStateException("Missing SYNC column type probe metadata for type family: " + expectedTypeFamilyKey);
         }
-        String expectedActualTypeFamilyKey = columnTypeFamilyKey(dbType, probeColumnMetadata);
-        String actualTypeFamilyKey = columnTypeFamilyKey(dbType, columnMetadata);
-        if (!expectedActualTypeFamilyKey.equals(actualTypeFamilyKey)) {
-            return true;
+        if (probeColumnMetadata.getTypeName().equals(columnMetadata.getTypeName())) {
+            return false;
         }
-        return columnTypeParametersChanged(dbType, expectedTypeSignature, columnMetadata);
+        return false;
     }
 
     /**
@@ -2116,13 +2132,18 @@ public class DefaultDDLAutoExecutor implements DDLAutoExecutor {
         String expectedType = normalizeColumnTypeSignature(dbType, expectedTypeSignature);
         String actualType = normalizeColumnTypeSignature(dbType, buildActualColumnTypeSignature(dbType, columnMetadata));
         String expectedTypeFamilyKey = columnTypeFamilyKey(dbType, expectedType);
-        if (isPrecisionScaleType(expectedTypeFamilyKey)) {
-            return !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
-        }
-        if (isLengthType(expectedTypeFamilyKey)) {
-            return !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
-        }
-        return false;
+        return columnLengthChanged(expectedTypeFamilyKey, expectedType, actualType)
+                || columnPrecisionChanged(expectedTypeFamilyKey, expectedType, actualType);
+    }
+
+    protected boolean columnLengthChanged(String expectedTypeFamilyKey, String expectedType, String actualType) {
+        return isLengthType(expectedTypeFamilyKey)
+                && !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
+    }
+
+    protected boolean columnPrecisionChanged(String expectedTypeFamilyKey, String expectedType, String actualType) {
+        return isPrecisionScaleType(expectedTypeFamilyKey)
+                && !columnTypeParameters(expectedType).equals(columnTypeParameters(actualType));
     }
 
     /**
