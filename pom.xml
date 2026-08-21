@@ -4,7 +4,7 @@
     <parent>
         <groupId>cn.xbatis</groupId>
         <artifactId>xbatis-parent</artifactId>
-        <version>1.10.7</version>
+        <version>1.10.8</version>
         <relativePath/>
     </parent>
     <groupId>cn.xbatis</groupId>
@@ -18,7 +18,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>
-        <xbatis.version>1.10.7</xbatis.version>
+        <xbatis.version>1.10.8</xbatis.version>
         <maven.surefire.version>3.2.5</maven.surefire.version>
         <jacoco.version>0.8.14</jacoco.version>
         <surefire.groups></surefire.groups>
